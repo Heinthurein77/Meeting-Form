@@ -63,8 +63,18 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # stored in that session's st.session_state.
 def get_supabase() -> Client:
     if "sb_client" not in st.session_state:
-        url = st.secrets["supabase"]["url"]
-        key = st.secrets["supabase"]["key"]
+        supabase_secrets = st.secrets.get("supabase", {})
+        url = supabase_secrets.get("url")
+        key = supabase_secrets.get("key")
+        if not url or not key or "YOUR_SUPABASE" in url or "YOUR_SUPABASE" in key:
+            st.error(
+                "**Supabase credentials are not configured.**\n\n"
+                "- On Streamlit Community Cloud: open **Manage app → Settings → Secrets** "
+                "and paste your `[supabase]` url and key.\n"
+                "- Running locally: fill in the real values in `.streamlit/secrets.toml`.\n\n"
+                "See README.md section 4/6 for the exact format."
+            )
+            st.stop()
         st.session_state.sb_client = create_client(url, key)
     return st.session_state.sb_client
 
