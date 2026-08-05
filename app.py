@@ -305,21 +305,42 @@ def render_survey_form(sb: Client):
 
 
 def render_new_survey_tab(sb: Client):
-    profile = st.session_state.profile or {}
+    # Fetch fresh rather than trusting the cached session_state.profile, so
+    # a fix an admin just made via Manage Users -> Edit Info shows up here
+    # immediately instead of only after the trainee logs out and back in.
+    try:
+        profile = load_profile(sb, st.session_state.auth_user["id"]) or {}
+        st.session_state.profile = profile
+    except Exception:
+        profile = st.session_state.profile or {}
+
+    full_name = profile.get("full_name") or ""
+    position_value = profile.get("position") or ""
+    department_value = profile.get("department") or ""
+
+    if not (full_name and position_value and department_value):
+        st.warning(
+            "Your profile is missing Name/Position/Department, so those fields below are blank. "
+            "These are locked and can only be filled in by an admin — ask one to complete your "
+            "profile (Manage Users → Edit Info) before you can submit."
+        )
+
     nonce = st.session_state.form_nonce
 
     with st.form(f"survey_form_{nonce}", clear_on_submit=False):
         st.subheader("Basic Information")
 
         trainee_name = st.text_input(
-            "Trainee Name *", value=profile.get("full_name") or "", key=f"name_{nonce}"
+            "Trainee Name *", value=full_name, key=f"name_{nonce}", disabled=True
         )
         c1, c2 = st.columns(2)
         with c1:
-            position = st.text_input("Position", value=profile.get("position") or "", key=f"pos_{nonce}")
+            position = st.text_input(
+                "Position", value=position_value, key=f"pos_{nonce}", disabled=True
+            )
         with c2:
             department = st.text_input(
-                "Department", value=profile.get("department") or "", key=f"dept_{nonce}"
+                "Department", value=department_value, key=f"dept_{nonce}", disabled=True
             )
 
         training_course = st.text_input("Training Course *", key=f"course_{nonce}")
@@ -396,23 +417,6 @@ def render_new_survey_tab(sb: Client):
 
     try:
         sb.table("survey_responses").insert(payload).execute()
-
-        # Keep the profile in sync with whatever they just typed, so
-        # Position/Department (and Name) auto-fill next time they open the
-        # form or log in — this also fixes it for accounts whose profile
-        # was never populated at signup (e.g. pre-dating this change).
-        try:
-            sb.table("users_profile").update(
-                {
-                    "full_name": payload["trainee_name"],
-                    "department": payload["department"],
-                    "position": payload["position"],
-                }
-            ).eq("id", st.session_state.auth_user["id"]).execute()
-            st.session_state.profile = load_profile(sb, st.session_state.auth_user["id"])
-        except Exception:
-            pass  # best-effort profile sync; the survey response itself already succeeded
-
         st.toast("Survey submitted — thank you!", icon="✅")
         st.session_state.form_nonce += 1  # forces a clean form on rerun
         st.rerun()
