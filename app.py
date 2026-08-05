@@ -226,8 +226,6 @@ def render_auth_screen(sb: Client):
 # Survey form (trainee)
 # ---------------------------------------------------------------------------
 def render_survey_form(sb: Client):
-    profile = st.session_state.profile or {}
-
     st.markdown(
         f"""
         <div class="survey-header">
@@ -243,6 +241,15 @@ def render_survey_form(sb: Client):
         if st.button("Log Out", use_container_width=True):
             sign_out(sb)
 
+    tab_new, tab_mine = st.tabs(["📝 New Survey", "🗂️ My Submissions"])
+    with tab_new:
+        render_new_survey_tab(sb)
+    with tab_mine:
+        render_my_submissions_tab(sb)
+
+
+def render_new_survey_tab(sb: Client):
+    profile = st.session_state.profile or {}
     nonce = st.session_state.form_nonce
 
     with st.form(f"survey_form_{nonce}", clear_on_submit=False):
@@ -340,6 +347,59 @@ def render_survey_form(sb: Client):
         st.error(f"Could not submit survey: {e}")
 
 
+def render_my_submissions_tab(sb: Client):
+    """Lets a trainee see the surveys they personally submitted, with dates.
+    RLS (responses_select_own) already restricts this query to their own
+    rows even without the explicit filter, but we filter anyway for clarity.
+    """
+    user_id = st.session_state.auth_user["id"]
+
+    if st.button("Refresh", key="refresh_my_submissions"):
+        st.rerun()
+
+    try:
+        resp = (
+            sb.table("survey_responses")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except Exception as e:
+        st.error(f"Could not load your submissions: {e}")
+        return
+
+    rows = resp.data or []
+    if not rows:
+        st.info("You haven't submitted any surveys yet.")
+        return
+
+    st.caption(f"{len(rows)} submission(s)")
+
+    for row in rows:
+        created = pd.to_datetime(row["created_at"]).strftime("%Y-%m-%d %H:%M")
+        with st.expander(f"{created} — {row.get('training_course') or '(no course)'}"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write(f"**Presenter:** {row.get('presenter_name') or '-'}")
+                st.write(f"**Department:** {row.get('department') or '-'}")
+            with c2:
+                st.write(f"**Position:** {row.get('position') or '-'}")
+                st.write(f"**Training Hours:** {row.get('training_hours') or '-'}")
+
+            st.markdown("**Ratings**")
+            for field, label in RATING_QUESTIONS:
+                val = row.get(field)
+                st.write(f"- {label} → **{val if val is not None else '-'}**/4")
+
+            open_answers = [(label, row.get(field)) for field, label in OPEN_QUESTIONS if row.get(field)]
+            if open_answers:
+                st.markdown("**Feedback**")
+                for label, val in open_answers:
+                    st.write(f"- {label}")
+                    st.write(val)
+
+
 # ---------------------------------------------------------------------------
 # Admin dashboard
 # ---------------------------------------------------------------------------
@@ -363,6 +423,12 @@ def fetch_responses(_sb: Client, cache_key: str) -> pd.DataFrame:
 
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
+    df = df.copy()
+    # Excel/openpyxl cannot store timezone-aware datetimes; Supabase returns
+    # created_at with a UTC offset, so strip the tz before writing.
+    for col in df.columns:
+        if isinstance(df[col].dtype, pd.DatetimeTZDtype):
+            df[col] = df[col].dt.tz_localize(None)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Responses")
