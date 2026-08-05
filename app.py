@@ -136,15 +136,29 @@ def sign_in(sb: Client, email: str, password: str):
 
 
 def sign_up(sb: Client, email: str, password: str, full_name: str, department: str, position: str):
-    result = sb.auth.sign_up({"email": email, "password": password})
+    # full_name/department/position are passed as Supabase Auth user
+    # metadata (not written to users_profile directly here) because if
+    # email confirmation is enabled there is no active session yet to
+    # authorize a table update. The handle_new_user() trigger in
+    # schema.sql reads this metadata when it inserts the profile row, so
+    # it works the same way whether or not email confirmation is on.
+    result = sb.auth.sign_up(
+        {
+            "email": email,
+            "password": password,
+            "options": {
+                "data": {
+                    "full_name": full_name,
+                    "department": department,
+                    "position": position,
+                }
+            },
+        }
+    )
     if result.user is None:
         raise RuntimeError("Sign-up did not return a user. Please try again.")
 
-    # If email confirmation is required, there is no active session yet.
     if result.session is not None and result.user.id:
-        sb.table("users_profile").update(
-            {"full_name": full_name, "department": department, "position": position}
-        ).eq("id", result.user.id).execute()
         st.session_state.auth_user = {"id": result.user.id, "email": result.user.email}
         st.session_state.profile = load_profile(sb, result.user.id)
         return True  # logged in immediately
@@ -343,6 +357,23 @@ def render_new_survey_tab(sb: Client):
 
     try:
         sb.table("survey_responses").insert(payload).execute()
+
+        # Keep the profile in sync with whatever they just typed, so
+        # Position/Department (and Name) auto-fill next time they open the
+        # form or log in — this also fixes it for accounts whose profile
+        # was never populated at signup (e.g. pre-dating this change).
+        try:
+            sb.table("users_profile").update(
+                {
+                    "full_name": payload["trainee_name"],
+                    "department": payload["department"],
+                    "position": payload["position"],
+                }
+            ).eq("id", st.session_state.auth_user["id"]).execute()
+            st.session_state.profile = load_profile(sb, st.session_state.auth_user["id"])
+        except Exception:
+            pass  # best-effort profile sync; the survey response itself already succeeded
+
         st.toast("Survey submitted — thank you!", icon="✅")
         st.session_state.form_nonce += 1  # forces a clean form on rerun
         st.rerun()

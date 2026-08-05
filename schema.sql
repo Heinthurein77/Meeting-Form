@@ -26,6 +26,10 @@ create table if not exists public.users_profile (
 -- Auto-create a profile row whenever someone signs up via Supabase Auth.
 -- Any email listed in admin_emails is auto-assigned role='admin' on sign-up.
 -- Add more addresses to the array below to grant additional default admins.
+-- full_name/department/position come from the signup call's user metadata
+-- (auth.users.raw_user_meta_data) rather than a follow-up table update,
+-- because that metadata is captured immediately at signup even when email
+-- confirmation is enabled and no session exists yet to authorize a write.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -39,8 +43,15 @@ begin
         assigned_role := 'admin';
     end if;
 
-    insert into public.users_profile (id, email, role)
-    values (new.id, new.email, assigned_role)
+    insert into public.users_profile (id, email, role, full_name, department, position)
+    values (
+        new.id,
+        new.email,
+        assigned_role,
+        new.raw_user_meta_data ->> 'full_name',
+        new.raw_user_meta_data ->> 'department',
+        new.raw_user_meta_data ->> 'position'
+    )
     on conflict (id) do nothing;
     return new;
 end;
