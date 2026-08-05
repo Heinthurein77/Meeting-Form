@@ -8,6 +8,7 @@ Run: streamlit run app.py
 import base64
 import io
 from datetime import date, datetime, timedelta
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -422,10 +423,51 @@ def fetch_submissions_for_user(sb: Client, user_id: str) -> list[dict]:
     return resp.data or []
 
 
-def render_submission_list(rows: list[dict]):
+def delete_submission(sb: Client, response_id: str) -> None:
+    """Permanently deletes one survey response. Backed by the
+    responses_delete_admin RLS policy in schema.sql, so this works with
+    the regular publishable-key client — no privileged key needed."""
+    sb.table("survey_responses").delete().eq("id", response_id).execute()
+
+
+def render_delete_submission_control(sb: Client, response_id: str, key_prefix: str):
+    """Two-step delete confirm for one submission, reusable wherever an
+    admin is looking at individual responses."""
+    confirm_key = f"{key_prefix}_confirm_{response_id}"
+
+    if not st.session_state.get(confirm_key):
+        if st.button("🗑️ Delete Submission", key=f"{key_prefix}_btn_{response_id}", use_container_width=True):
+            st.session_state[confirm_key] = True
+            st.rerun()
+        return
+
+    st.warning("Permanently delete this submission? This cannot be undone.")
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        confirmed = st.button(
+            "Yes, delete", key=f"{key_prefix}_yes_{response_id}", use_container_width=True, type="primary"
+        )
+    with dc2:
+        if st.button("Cancel", key=f"{key_prefix}_no_{response_id}", use_container_width=True):
+            st.session_state[confirm_key] = False
+            st.rerun()
+
+    if confirmed:
+        try:
+            delete_submission(sb, response_id)
+            st.cache_data.clear()
+            st.session_state[confirm_key] = False
+            st.toast("Submission deleted", icon="🗑️")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not delete submission ({type(e).__name__}): {e}")
+
+
+def render_submission_list(rows: list[dict], sb: Optional[Client] = None, allow_delete: bool = False):
     """Shared expander-list layout for a set of submissions — used both for
     a trainee's own 'My Submissions' tab and an admin viewing someone
-    else's submissions the same way, from Manage Users."""
+    else's submissions the same way, from Manage Users. allow_delete is
+    admin-only: trainees never get a delete control on their own view."""
     if not rows:
         st.info("No submissions yet.")
         return
@@ -455,6 +497,10 @@ def render_submission_list(rows: list[dict]):
                     st.write(f"- {label}")
                     st.write(val)
 
+            if allow_delete and sb is not None:
+                st.divider()
+                render_delete_submission_control(sb, row["id"], key_prefix="submlist")
+
 
 def render_my_submissions_tab(sb: Client):
     """Lets a trainee see the surveys they personally submitted, with dates.
@@ -472,7 +518,7 @@ def render_my_submissions_tab(sb: Client):
         st.error(f"Could not load your submissions: {e}")
         return
 
-    render_submission_list(rows)
+    render_submission_list(rows)  # allow_delete stays False: trainees can't delete their own records
 
 
 # ---------------------------------------------------------------------------
@@ -845,6 +891,9 @@ def render_browse_submissions_tab(sb: Client):
         st.markdown(f"**{label}**")
         st.write(val if val else "_No response_")
 
+    st.divider()
+    render_delete_submission_control(sb, row["id"], key_prefix="browse")
+
 
 # ---------------------------------------------------------------------------
 # Admin: manage users
@@ -963,7 +1012,7 @@ def render_manage_users_tab(sb: Client):
                 except Exception as e:
                     st.error(f"Could not load submissions: {e}")
                 else:
-                    render_submission_list(submissions)
+                    render_submission_list(submissions, sb=sb, allow_delete=True)
 
             if is_confirming_delete:
                 st.divider()
