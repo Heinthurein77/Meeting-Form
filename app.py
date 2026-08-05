@@ -11,6 +11,8 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from supabase import Client, create_client
 
 # ---------------------------------------------------------------------------
@@ -496,9 +498,49 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
     for col in df.columns:
         if isinstance(df[col].dtype, pd.DatetimeTZDtype):
             df[col] = df[col].dt.tz_localize(None)
+
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Responses")
+        worksheet = writer.sheets["Responses"]
+        worksheet.sheet_view.showGridLines = True
+
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(name="Calibri", bold=True, color="FFFFFF")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+
+        data_font = Font(name="Calibri")
+        data_alignment = Alignment(vertical="center")
+        thin_side = Side(style="thin", color="D9D9D9")
+        data_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+        n_rows, n_cols = df.shape
+
+        worksheet.row_dimensions[1].height = 28
+        for col_idx in range(1, n_cols + 1):
+            cell = worksheet.cell(row=1, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+
+        for row_idx in range(2, n_rows + 2):
+            worksheet.row_dimensions[row_idx].height = 22
+            for col_idx in range(1, n_cols + 1):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                cell.font = data_font
+                cell.alignment = data_alignment
+                cell.border = data_border
+
+        def _cell_len(value) -> int:
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return 0
+            return len(str(value))
+
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            max_len = max([_cell_len(col_name)] + [_cell_len(v) for v in df.iloc[:, col_idx - 1]])
+            width = min(max(max_len + 2, 12), 45)
+            worksheet.column_dimensions[get_column_letter(col_idx)].width = width
+
     return output.getvalue()
 
 
