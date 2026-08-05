@@ -238,6 +238,9 @@ def render_survey_form(sb: Client):
 
     with st.sidebar:
         st.write(f"Logged in as **{st.session_state.auth_user['email']}**")
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
         if st.button("Log Out", use_container_width=True):
             sign_out(sb)
 
@@ -448,7 +451,7 @@ def render_admin_dashboard(sb: Client):
 
     with st.sidebar:
         st.write(f"Logged in as **{st.session_state.auth_user['email']}** (admin)")
-        if st.button("Refresh Data", use_container_width=True):
+        if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
         if st.button("Log Out", use_container_width=True):
