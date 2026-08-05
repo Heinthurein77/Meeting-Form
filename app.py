@@ -454,6 +454,14 @@ def render_admin_dashboard(sb: Client):
         if st.button("Log Out", use_container_width=True):
             sign_out(sb)
 
+    tab_analytics, tab_users = st.tabs(["📊 Analytics", "🗂️ Manage Users"])
+    with tab_analytics:
+        render_analytics_tab(sb)
+    with tab_users:
+        render_manage_users_tab(sb)
+
+
+def render_analytics_tab(sb: Client):
     try:
         df = fetch_responses(sb, st.session_state.auth_user["id"])
     except Exception as e:
@@ -564,6 +572,74 @@ def render_admin_dashboard(sb: Client):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Admin: manage users
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_users(_sb: Client, cache_key: str) -> pd.DataFrame:
+    resp = _sb.table("users_profile").select("*").order("email").execute()
+    return pd.DataFrame(resp.data)
+
+
+def render_manage_users_tab(sb: Client):
+    """Lets an admin view every user and promote/demote their role.
+    Backed by the profile_update_admin RLS policy, which lets any admin
+    update any users_profile row using the regular publishable key.
+    """
+    if st.button("Refresh Users", key="refresh_users"):
+        st.cache_data.clear()
+        st.rerun()
+
+    try:
+        users_df = fetch_users(sb, "manage_users")
+    except Exception as e:
+        st.error(f"Could not load users: {e}")
+        return
+
+    if users_df.empty:
+        st.info("No users found.")
+        return
+
+    st.caption(f"{len(users_df)} user(s)")
+    current_admin_id = st.session_state.auth_user["id"]
+
+    for _, row in users_df.iterrows():
+        uid = row["id"]
+        current_role = row.get("role") or "user"
+        is_self = uid == current_admin_id
+
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([3, 2, 2])
+            with c1:
+                st.write(f"**{row.get('full_name') or '(no name)'}**")
+                st.caption(row.get("email") or "")
+                if row.get("department") or row.get("position"):
+                    st.caption(" · ".join(filter(None, [row.get("department"), row.get("position")])))
+            with c2:
+                new_role = st.segmented_control(
+                    "Role",
+                    options=["user", "admin"],
+                    default=current_role,
+                    key=f"role_{uid}",
+                    label_visibility="collapsed",
+                    disabled=is_self,
+                )
+            with c3:
+                if is_self:
+                    st.caption("This is you")
+                elif st.button("Save", key=f"save_{uid}", use_container_width=True):
+                    if new_role == current_role:
+                        st.info("No change.")
+                    else:
+                        try:
+                            sb.table("users_profile").update({"role": new_role}).eq("id", uid).execute()
+                            st.cache_data.clear()
+                            st.toast(f"{row.get('email')} is now {new_role}", icon="✅")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Could not update role: {e}")
 
 
 # ---------------------------------------------------------------------------
