@@ -583,6 +583,15 @@ def fetch_users(_sb: Client, cache_key: str) -> pd.DataFrame:
     return pd.DataFrame(resp.data)
 
 
+def _s(value) -> str:
+    """Safely stringify a pandas row value, treating NaN/None as empty.
+    pandas represents missing strings as float NaN, not None, so a plain
+    `value or default` check isn't enough — NaN is truthy in Python."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value)
+
+
 def render_manage_users_tab(sb: Client):
     """Lets an admin view every user and promote/demote their role.
     Backed by the profile_update_admin RLS policy, which lets any admin
@@ -607,16 +616,17 @@ def render_manage_users_tab(sb: Client):
 
     for _, row in users_df.iterrows():
         uid = row["id"]
-        current_role = row.get("role") or "user"
+        current_role = _s(row.get("role")) or "user"
         is_self = uid == current_admin_id
 
         with st.container(border=True):
             c1, c2, c3 = st.columns([3, 2, 2])
             with c1:
-                st.write(f"**{row.get('full_name') or '(no name)'}**")
-                st.caption(row.get("email") or "")
-                if row.get("department") or row.get("position"):
-                    st.caption(" · ".join(filter(None, [row.get("department"), row.get("position")])))
+                st.write(f"**{_s(row.get('full_name')) or '(no name)'}**")
+                st.caption(_s(row.get("email")))
+                extra = " · ".join(p for p in (_s(row.get("department")), _s(row.get("position"))) if p)
+                if extra:
+                    st.caption(extra)
             with c2:
                 new_role = st.segmented_control(
                     "Role",
@@ -636,7 +646,7 @@ def render_manage_users_tab(sb: Client):
                         try:
                             sb.table("users_profile").update({"role": new_role}).eq("id", uid).execute()
                             st.cache_data.clear()
-                            st.toast(f"{row.get('email')} is now {new_role}", icon="✅")
+                            st.toast(f"{_s(row.get('email'))} is now {new_role}", icon="✅")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Could not update role: {e}")
