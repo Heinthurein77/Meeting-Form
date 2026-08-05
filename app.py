@@ -984,9 +984,10 @@ def render_manage_users_tab(sb: Client):
 
             email = _s(row.get("email"))
             is_viewing = st.session_state.get("manage_viewing_uid") == uid
+            is_editing = st.session_state.get("manage_editing_uid") == uid
             is_confirming_delete = st.session_state.get("manage_confirm_delete_uid") == uid
 
-            b1, b2 = st.columns(2)
+            b1, b2, b3 = st.columns(3)
             with b1:
                 if st.button(
                     "🗂️ Hide Submissions" if is_viewing else "🗂️ View Submissions",
@@ -996,6 +997,14 @@ def render_manage_users_tab(sb: Client):
                     st.session_state.manage_viewing_uid = None if is_viewing else uid
                     st.rerun()
             with b2:
+                if st.button(
+                    "✏️ Cancel Edit" if is_editing else "✏️ Edit Info",
+                    key=f"edit_{uid}",
+                    use_container_width=True,
+                ):
+                    st.session_state.manage_editing_uid = None if is_editing else uid
+                    st.rerun()
+            with b3:
                 if is_self:
                     st.caption("Can't delete your own account")
                 elif not delete_enabled:
@@ -1003,6 +1012,33 @@ def render_manage_users_tab(sb: Client):
                 elif st.button("🗑️ Delete User", key=f"delete_{uid}", use_container_width=True):
                     st.session_state.manage_confirm_delete_uid = uid
                     st.rerun()
+
+            if is_editing:
+                st.divider()
+                st.caption("Fixes a blank profile (e.g. \"(no name)\") for accounts that never got their info saved at signup.")
+                new_name = st.text_input("Full Name", value=_s(row.get("full_name")), key=f"edit_name_{uid}")
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    new_dept = st.text_input(
+                        "Department", value=_s(row.get("department")), key=f"edit_dept_{uid}"
+                    )
+                with ec2:
+                    new_pos = st.text_input(
+                        "Position", value=_s(row.get("position")), key=f"edit_pos_{uid}"
+                    )
+                if st.button("Save Profile", key=f"save_profile_{uid}", type="primary"):
+                    try:
+                        sb.table("users_profile").update(
+                            {"full_name": new_name.strip(), "department": new_dept.strip(), "position": new_pos.strip()}
+                        ).eq("id", uid).execute()
+                        st.cache_data.clear()
+                        st.session_state.manage_editing_uid = None
+                        if is_self:
+                            st.session_state.profile = load_profile(sb, uid)
+                        st.toast(f"Updated {email}'s profile", icon="✅")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not update profile ({type(e).__name__}): {e}")
 
             if is_viewing:
                 st.divider()
