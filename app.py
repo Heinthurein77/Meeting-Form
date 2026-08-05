@@ -832,6 +832,16 @@ def render_manage_users_tab(sb: Client):
         return
 
     st.caption(f"{len(users_df)} user(s)")
+
+    # Detect this up front rather than letting every Delete button fail
+    # silently one at a time — this is the most common reason deletion
+    # doesn't work, so surface it once, clearly, at the top of the tab.
+    delete_enabled = bool(st.secrets.get("supabase", {}).get("service_role_key"))
+    if not delete_enabled:
+        st.info(
+            "User deletion is turned off: no `service_role_key` is configured in secrets. "
+            "See README.md section 4 to enable it."
+        )
     current_admin_id = st.session_state.auth_user["id"]
 
     for _, row in users_df.iterrows():
@@ -887,6 +897,8 @@ def render_manage_users_tab(sb: Client):
             with b2:
                 if is_self:
                     st.caption("Can't delete your own account")
+                elif not delete_enabled:
+                    st.caption("Deletion disabled (see note above)")
                 elif st.button("🗑️ Delete User", key=f"delete_{uid}", use_container_width=True):
                     st.session_state.manage_confirm_delete_uid = uid
                     st.rerun()
@@ -909,24 +921,28 @@ def render_manage_users_tab(sb: Client):
                 )
                 d1, d2 = st.columns(2)
                 with d1:
-                    if st.button(
+                    confirm_clicked = st.button(
                         "Yes, delete permanently",
                         key=f"confirm_delete_{uid}",
                         use_container_width=True,
                         type="primary",
-                    ):
-                        try:
-                            delete_user(uid)
-                            st.cache_data.clear()
-                            st.session_state.manage_confirm_delete_uid = None
-                            st.toast(f"Deleted {email}", icon="🗑️")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Could not delete user: {e}")
+                    )
                 with d2:
                     if st.button("Cancel", key=f"cancel_delete_{uid}", use_container_width=True):
                         st.session_state.manage_confirm_delete_uid = None
                         st.rerun()
+
+                # Rendered full-width below the columns (not squeezed inside
+                # d1) so a failure is impossible to miss.
+                if confirm_clicked:
+                    try:
+                        delete_user(uid)
+                        st.cache_data.clear()
+                        st.session_state.manage_confirm_delete_uid = None
+                        st.toast(f"Deleted {email}", icon="🗑️")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not delete user ({type(e).__name__}): {e}")
 
 
 # ---------------------------------------------------------------------------
