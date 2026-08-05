@@ -38,18 +38,24 @@ Streamlit + Supabase app for collecting and analyzing internal training feedback
 
 ## 4. Configure secrets
 
-Edit `.streamlit/secrets.toml`:
+Edit `.streamlit/secrets.toml` (gitignored — never committed):
 
 ```toml
 [supabase]
 url = "https://YOUR_PROJECT_REF.supabase.co"
-key = "YOUR_SUPABASE_ANON_PUBLIC_KEY"
+key = "YOUR_SUPABASE_PUBLISHABLE_OR_ANON_PUBLIC_KEY"
+service_role_key = ""   # optional — see below
 
 [app]
 company_name = "ABC-MIB Group Co., Ltd."
 ```
 
-Use the **anon public** key only — never the `service_role` key in a Streamlit app, since `secrets.toml` / app code is not a safe place for a key that bypasses RLS.
+`key` must be the **Publishable key** (`sb_publishable_...`) or legacy **anon public** key — never the secret/`service_role` key, since that bypasses RLS and would let any visitor read or modify all data.
+
+`service_role_key` is **optional** and only powers one feature: the admin **"Delete User"** button in Manage Users (deleting an account requires Supabase's Auth Admin API, which needs this key). Leave it blank to disable that button entirely — everything else in the app works fine without it. If you do set it:
+- Use the **Secret key** (`sb_secret_...`) from **Project Settings → API Keys**.
+- The app only ever uses it inside one function (`delete_user()`), called only from admin-gated UI, and never as the app's regular client — it's not exposed to the browser.
+- Treat it like a root password: anyone with this value can bypass every RLS policy in `schema.sql`.
 
 ## 5. Run locally
 
@@ -64,13 +70,14 @@ Open the local URL Streamlit prints (usually `http://localhost:8501`). Test on y
 
 ## 6. Deploy to Streamlit Community Cloud
 
-1. Push this folder to a **private** GitHub repository (do not commit real secrets — the tracked `secrets.toml` should keep placeholder values only).
+1. Push this folder to a **private** GitHub repository. `secrets.toml` is gitignored, so it never reaches GitHub — Streamlit Cloud gets its secrets separately, in the next step.
 2. Go to [share.streamlit.io](https://share.streamlit.io) → **New app** → pick the repo/branch → main file `app.py`.
-3. In **Advanced settings → Secrets**, paste the real values:
+3. In **Manage app → Settings → Secrets**, paste the same values you used locally:
    ```toml
    [supabase]
    url = "https://YOUR_PROJECT_REF.supabase.co"
-   key = "YOUR_SUPABASE_ANON_PUBLIC_KEY"
+   key = "YOUR_SUPABASE_PUBLISHABLE_OR_ANON_PUBLIC_KEY"
+   service_role_key = ""   # only if you want the Delete User feature enabled
 
    [app]
    company_name = "ABC-MIB Group Co., Ltd."

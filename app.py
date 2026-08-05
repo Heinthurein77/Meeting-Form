@@ -110,6 +110,28 @@ def get_supabase() -> Client:
     return st.session_state.sb_client
 
 
+def delete_user(user_id: str) -> None:
+    """Permanently deletes a user via the Supabase Auth Admin API.
+
+    This is the one deliberate, narrow use of the secret/service_role key
+    in the whole app: a fresh admin client is built here, used for exactly
+    this one call, and discarded — never stored in session_state, never
+    used for anything else, and only ever reached from admin-gated UI.
+    survey_responses keeps the person's past submissions (user_id is set
+    to NULL by the FK's ON DELETE SET NULL), only the login account and
+    users_profile row (cascades) are removed.
+    """
+    service_key = st.secrets.get("supabase", {}).get("service_role_key")
+    if not service_key:
+        raise RuntimeError(
+            "No service_role key configured. Add service_role_key under "
+            "[supabase] in secrets to enable deleting users."
+        )
+    url = st.secrets["supabase"]["url"]
+    admin_client = create_client(url, service_key)
+    admin_client.auth.admin.delete_user(user_id)
+
+
 # ---------------------------------------------------------------------------
 # Session / auth helpers
 # ---------------------------------------------------------------------------
@@ -381,31 +403,23 @@ def render_new_survey_tab(sb: Client):
         st.error(f"Could not submit survey: {e}")
 
 
-def render_my_submissions_tab(sb: Client):
-    """Lets a trainee see the surveys they personally submitted, with dates.
-    RLS (responses_select_own) already restricts this query to their own
-    rows even without the explicit filter, but we filter anyway for clarity.
-    """
-    user_id = st.session_state.auth_user["id"]
+def fetch_submissions_for_user(sb: Client, user_id: str) -> list[dict]:
+    resp = (
+        sb.table("survey_responses")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return resp.data or []
 
-    if st.button("Refresh", key="refresh_my_submissions"):
-        st.rerun()
 
-    try:
-        resp = (
-            sb.table("survey_responses")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .execute()
-        )
-    except Exception as e:
-        st.error(f"Could not load your submissions: {e}")
-        return
-
-    rows = resp.data or []
+def render_submission_list(rows: list[dict]):
+    """Shared expander-list layout for a set of submissions — used both for
+    a trainee's own 'My Submissions' tab and an admin viewing someone
+    else's submissions the same way, from Manage Users."""
     if not rows:
-        st.info("You haven't submitted any surveys yet.")
+        st.info("No submissions yet.")
         return
 
     st.caption(f"{len(rows)} submission(s)")
@@ -432,6 +446,25 @@ def render_my_submissions_tab(sb: Client):
                 for label, val in open_answers:
                     st.write(f"- {label}")
                     st.write(val)
+
+
+def render_my_submissions_tab(sb: Client):
+    """Lets a trainee see the surveys they personally submitted, with dates.
+    RLS (responses_select_own) already restricts this query to their own
+    rows even without the explicit filter, but we filter anyway for clarity.
+    """
+    user_id = st.session_state.auth_user["id"]
+
+    if st.button("Refresh", key="refresh_my_submissions"):
+        st.rerun()
+
+    try:
+        rows = fetch_submissions_for_user(sb, user_id)
+    except Exception as e:
+        st.error(f"Could not load your submissions: {e}")
+        return
+
+    render_submission_list(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -837,6 +870,63 @@ def render_manage_users_tab(sb: Client):
                             st.rerun()
                         except Exception as e:
                             st.error(f"Could not update role: {e}")
+
+            email = _s(row.get("email"))
+            is_viewing = st.session_state.get("manage_viewing_uid") == uid
+            is_confirming_delete = st.session_state.get("manage_confirm_delete_uid") == uid
+
+            b1, b2 = st.columns(2)
+            with b1:
+                if st.button(
+                    "🗂️ Hide Submissions" if is_viewing else "🗂️ View Submissions",
+                    key=f"view_{uid}",
+                    use_container_width=True,
+                ):
+                    st.session_state.manage_viewing_uid = None if is_viewing else uid
+                    st.rerun()
+            with b2:
+                if is_self:
+                    st.caption("Can't delete your own account")
+                elif st.button("🗑️ Delete User", key=f"delete_{uid}", use_container_width=True):
+                    st.session_state.manage_confirm_delete_uid = uid
+                    st.rerun()
+
+            if is_viewing:
+                st.divider()
+                st.markdown(f"**Submissions from {email}** — viewed exactly as {email} sees their own")
+                try:
+                    submissions = fetch_submissions_for_user(sb, uid)
+                except Exception as e:
+                    st.error(f"Could not load submissions: {e}")
+                else:
+                    render_submission_list(submissions)
+
+            if is_confirming_delete:
+                st.divider()
+                st.warning(
+                    f"Permanently delete **{email}**? This cannot be undone. "
+                    "Their past survey submissions are kept but unlinked from any account."
+                )
+                d1, d2 = st.columns(2)
+                with d1:
+                    if st.button(
+                        "Yes, delete permanently",
+                        key=f"confirm_delete_{uid}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        try:
+                            delete_user(uid)
+                            st.cache_data.clear()
+                            st.session_state.manage_confirm_delete_uid = None
+                            st.toast(f"Deleted {email}", icon="🗑️")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Could not delete user: {e}")
+                with d2:
+                    if st.button("Cancel", key=f"cancel_delete_{uid}", use_container_width=True):
+                        st.session_state.manage_confirm_delete_uid = None
+                        st.rerun()
 
 
 # ---------------------------------------------------------------------------
