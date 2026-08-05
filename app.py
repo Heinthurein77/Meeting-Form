@@ -8,12 +8,18 @@ Run: streamlit run app.py
 import base64
 import io
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from supabase import Client, create_client
+
+# Submissions are stored/fetched in UTC; the dashboard's Date Range filter
+# compares against calendar dates in this timezone so "today" means the
+# same thing to the admin using it as it did to the trainee submitting.
+LOCAL_TZ = ZoneInfo("Asia/Yangon")
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -585,6 +591,12 @@ def render_analytics_tab(sb: Client):
         st.info("No survey responses yet.")
         return
 
+    # created_at is stored/fetched in UTC. Compare the Date Range filter
+    # against the local calendar date instead, otherwise a submission made
+    # late at night local time can silently fall on "yesterday" in UTC and
+    # get excluded from a range that should include it.
+    df["_local_date"] = df["created_at"].dt.tz_convert(LOCAL_TZ).dt.date
+
     # ---- Filters ----
     st.subheader("Filters")
     f1, f2, f3 = st.columns(3)
@@ -595,8 +607,8 @@ def render_analytics_tab(sb: Client):
         departments = sorted(df["department"].dropna().unique().tolist())
         selected_departments = st.multiselect("Department", departments)
     with f3:
-        min_date = df["created_at"].min().date()
-        max_date = df["created_at"].max().date()
+        min_date = df["_local_date"].min()
+        max_date = df["_local_date"].max()
         date_range = st.date_input(
             "Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date
         )
@@ -608,9 +620,7 @@ def render_analytics_tab(sb: Client):
         filtered = filtered[filtered["department"].isin(selected_departments)]
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_d, end_d = date_range
-        filtered = filtered[
-            (filtered["created_at"].dt.date >= start_d) & (filtered["created_at"].dt.date <= end_d)
-        ]
+        filtered = filtered[(filtered["_local_date"] >= start_d) & (filtered["_local_date"] <= end_d)]
 
     if filtered.empty:
         st.warning("No responses match the selected filters.")
