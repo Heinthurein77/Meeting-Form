@@ -5,6 +5,7 @@ Streamlit + Supabase (Auth + Postgres) production app.
 Run: streamlit run app.py
 """
 
+import base64
 import io
 from datetime import date, datetime, timedelta
 
@@ -61,11 +62,29 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # would carry a single shared auth session and leak one user's login into
 # another user's browser tab. Each browser session gets its own client,
 # stored in that session's st.session_state.
+def _is_privileged_key(key: str) -> bool:
+    """Detect a secret/service_role key, which bypasses RLS and must never
+    be used in a public-facing app."""
+    if key.startswith("sb_secret_"):
+        return True
+    parts = key.split(".")
+    if len(parts) == 3:  # legacy JWT-style key (anon / service_role)
+        try:
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
+            payload = base64.urlsafe_b64decode(padded).decode("utf-8", "ignore")
+            if '"role":"service_role"' in payload:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def get_supabase() -> Client:
     if "sb_client" not in st.session_state:
         supabase_secrets = st.secrets.get("supabase", {})
         url = supabase_secrets.get("url")
         key = supabase_secrets.get("key")
+
         if not url or not key or "YOUR_SUPABASE" in url or "YOUR_SUPABASE" in key:
             st.error(
                 "**Supabase credentials are not configured.**\n\n"
@@ -75,6 +94,18 @@ def get_supabase() -> Client:
                 "See README.md section 4/6 for the exact format."
             )
             st.stop()
+
+        if _is_privileged_key(key):
+            st.error(
+                "**The configured Supabase key is a secret/service_role key.** "
+                "It bypasses Row Level Security, so using it here would let any "
+                "visitor read or modify all data — never use it in a public app.\n\n"
+                "In Supabase: **Project Settings → API Keys**, copy the "
+                "**Publishable key** (`sb_publishable_...`) — or the legacy "
+                "**anon public** key — and use that instead."
+            )
+            st.stop()
+
         st.session_state.sb_client = create_client(url, key)
     return st.session_state.sb_client
 
