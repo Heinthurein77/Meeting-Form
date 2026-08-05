@@ -454,9 +454,13 @@ def render_admin_dashboard(sb: Client):
         if st.button("Log Out", use_container_width=True):
             sign_out(sb)
 
-    tab_analytics, tab_users = st.tabs(["📊 Analytics", "🗂️ Manage Users"])
+    tab_analytics, tab_browse, tab_users = st.tabs(
+        ["📊 Analytics", "📄 Browse Submissions", "🗂️ Manage Users"]
+    )
     with tab_analytics:
         render_analytics_tab(sb)
+    with tab_browse:
+        render_browse_submissions_tab(sb)
     with tab_users:
         render_manage_users_tab(sb)
 
@@ -572,6 +576,89 @@ def render_analytics_tab(sb: Client):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Admin: browse submissions one-by-one (mirrors the trainee's own form view)
+# ---------------------------------------------------------------------------
+RATING_LABELS = {4: "Excellent", 3: "Good", 2: "Average", 1: "Poor"}
+
+
+def render_browse_submissions_tab(sb: Client):
+    try:
+        df = fetch_responses(sb, st.session_state.auth_user["id"])
+    except Exception as e:
+        st.error(f"Could not load responses: {e}")
+        return
+
+    if df.empty:
+        st.info("No survey responses yet.")
+        return
+
+    df = df.reset_index(drop=True)
+    n = len(df)
+
+    if "browse_idx" not in st.session_state or st.session_state.browse_idx >= n:
+        st.session_state.browse_idx = 0
+
+    def _label(i: int) -> str:
+        r = df.iloc[i]
+        created = r["created_at"].strftime("%Y-%m-%d %H:%M")
+        return f"{i + 1}/{n} — {_s(r.get('trainee_name')) or '(no name)'} — {created}"
+
+    nav1, nav2, nav3 = st.columns([1, 3, 1])
+    with nav1:
+        if st.button("⬅ Prev", use_container_width=True, disabled=st.session_state.browse_idx == 0):
+            st.session_state.browse_idx -= 1
+            st.rerun()
+    with nav2:
+        st.selectbox(
+            "Jump to submission",
+            options=list(range(n)),
+            format_func=_label,
+            key="browse_idx",
+            label_visibility="collapsed",
+        )
+    with nav3:
+        if st.button("Next ➡", use_container_width=True, disabled=st.session_state.browse_idx >= n - 1):
+            st.session_state.browse_idx += 1
+            st.rerun()
+
+    st.divider()
+    row = df.iloc[st.session_state.browse_idx]
+
+    st.markdown(f"### {_s(row.get('trainee_name')) or '(no name)'}")
+    st.caption(f"Submitted {row['created_at'].strftime('%Y-%m-%d %H:%M')}")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write(f"**Position:** {_s(row.get('position')) or '-'}")
+        st.write(f"**Department:** {_s(row.get('department')) or '-'}")
+        st.write(f"**Training Course:** {_s(row.get('training_course')) or '-'}")
+        st.write(f"**Presenter:** {_s(row.get('presenter_name')) or '-'}")
+    with c2:
+        st.write(f"**Start Date:** {_s(row.get('start_date')) or '-'}")
+        st.write(f"**Completed Date:** {_s(row.get('completed_date')) or '-'}")
+        st.write(f"**Training Hours:** {_s(row.get('training_hours')) or '-'}")
+        st.write(f"**Time Range:** {_s(row.get('time_range')) or '-'}")
+
+    st.divider()
+    st.markdown("#### Ratings")
+    for field, label in RATING_QUESTIONS:
+        val = row.get(field)
+        if pd.notna(val):
+            val_int = int(val)
+            text = f"{val_int} - {RATING_LABELS.get(val_int, '')}"
+        else:
+            text = "-"
+        st.write(f"- {label} → **{text}**")
+
+    st.divider()
+    st.markdown("#### Feedback")
+    for field, label in OPEN_QUESTIONS:
+        val = _s(row.get(field))
+        st.markdown(f"**{label}**")
+        st.write(val if val else "_No response_")
 
 
 # ---------------------------------------------------------------------------
