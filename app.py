@@ -168,11 +168,13 @@ def sign_in(sb: Client, email: str, password: str):
 
 def sign_up(sb: Client, email: str, password: str, full_name: str, department: str, position: str):
     # full_name/department/position are passed as Supabase Auth user
-    # metadata (not written to users_profile directly here) because if
-    # email confirmation is enabled there is no active session yet to
-    # authorize a table update. The handle_new_user() trigger in
-    # schema.sql reads this metadata when it inserts the profile row, so
-    # it works the same way whether or not email confirmation is on.
+    # metadata so the handle_new_user() trigger in schema.sql can save
+    # them even when email confirmation is enabled and there's no active
+    # session yet to authorize a direct table write. That only takes
+    # effect once schema.sql has actually been re-run against the
+    # database, though -- so as a second, independent path that works
+    # immediately regardless of that, we also write directly to
+    # users_profile below whenever sign-up returns a session right away.
     result = sb.auth.sign_up(
         {
             "email": email,
@@ -190,6 +192,12 @@ def sign_up(sb: Client, email: str, password: str, full_name: str, department: s
         raise RuntimeError("Sign-up did not return a user. Please try again.")
 
     if result.session is not None and result.user.id:
+        try:
+            sb.table("users_profile").update(
+                {"full_name": full_name, "department": department, "position": position}
+            ).eq("id", result.user.id).execute()
+        except Exception:
+            pass  # best-effort direct save; the trigger-based path may still have covered it
         st.session_state.auth_user = {"id": result.user.id, "email": result.user.email}
         st.session_state.profile = load_profile(sb, result.user.id)
         return True  # logged in immediately
