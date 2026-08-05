@@ -595,22 +595,51 @@ def render_browse_submissions_tab(sb: Client):
         st.info("No survey responses yet.")
         return
 
-    df = df.reset_index(drop=True)
-    n = len(df)
+    df = df.sort_values("created_at", ascending=False).reset_index(drop=True)
 
-    if "browse_idx" not in st.session_state or st.session_state.browse_idx >= n:
+    # ---- Filter by trainee, so an admin can page through one person's
+    # submissions instead of everyone mixed together ----
+    trainees = sorted(t for t in df["trainee_name"].dropna().unique().tolist() if t)
+    selected_trainee = st.selectbox("View submissions from", ["All Trainees"] + trainees)
+
+    view_df = (
+        df[df["trainee_name"] == selected_trainee].reset_index(drop=True)
+        if selected_trainee != "All Trainees"
+        else df
+    )
+    n = len(view_df)
+    if n == 0:
+        st.info("No submissions for this trainee.")
+        return
+
+    # Reset to the first submission whenever the trainee filter changes.
+    if st.session_state.get("browse_trainee_prev") != selected_trainee:
+        st.session_state.browse_idx = 0
+        st.session_state.browse_trainee_prev = selected_trainee
+    elif "browse_idx" not in st.session_state or st.session_state.browse_idx >= n:
         st.session_state.browse_idx = 0
 
     def _label(i: int) -> str:
-        r = df.iloc[i]
+        r = view_df.iloc[i]
         created = r["created_at"].strftime("%Y-%m-%d %H:%M")
         return f"{i + 1}/{n} — {_s(r.get('trainee_name')) or '(no name)'} — {created}"
 
+    # Evaluate both nav buttons (and any resulting session_state change +
+    # rerun) before the selectbox below is instantiated with the same key.
     nav1, nav2, nav3 = st.columns([1, 3, 1])
-    with nav1:
-        if st.button("⬅ Prev", use_container_width=True, disabled=st.session_state.browse_idx == 0):
-            st.session_state.browse_idx -= 1
-            st.rerun()
+    prev_clicked = nav1.button(
+        "⬅ Prev", use_container_width=True, disabled=st.session_state.browse_idx == 0
+    )
+    next_clicked = nav3.button(
+        "Next ➡", use_container_width=True, disabled=st.session_state.browse_idx >= n - 1
+    )
+    if prev_clicked:
+        st.session_state.browse_idx -= 1
+        st.rerun()
+    if next_clicked:
+        st.session_state.browse_idx += 1
+        st.rerun()
+
     with nav2:
         st.selectbox(
             "Jump to submission",
@@ -619,13 +648,9 @@ def render_browse_submissions_tab(sb: Client):
             key="browse_idx",
             label_visibility="collapsed",
         )
-    with nav3:
-        if st.button("Next ➡", use_container_width=True, disabled=st.session_state.browse_idx >= n - 1):
-            st.session_state.browse_idx += 1
-            st.rerun()
 
     st.divider()
-    row = df.iloc[st.session_state.browse_idx]
+    row = view_df.iloc[st.session_state.browse_idx]
 
     st.markdown(f"### {_s(row.get('trainee_name')) or '(no name)'}")
     st.caption(f"Submitted {row['created_at'].strftime('%Y-%m-%d %H:%M')}")
