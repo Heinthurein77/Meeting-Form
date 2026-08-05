@@ -600,25 +600,64 @@ def render_browse_submissions_tab(sb: Client):
 
     df = df.sort_values("created_at", ascending=False).reset_index(drop=True)
 
-    # ---- Filter by trainee, so an admin can page through one person's
-    # submissions instead of everyone mixed together ----
-    trainees = sorted(t for t in df["trainee_name"].dropna().unique().tolist() if t)
-    selected_trainee = st.selectbox("View submissions from", ["All Trainees"] + trainees)
+    # ---- Filter by the submitter's actual account (not the free-text
+    # "Trainee Name" field, which a trainee could type differently across
+    # submissions), so an admin reliably pages through one person's forms.
+    try:
+        users_df = fetch_users(sb, "manage_users")
+    except Exception:
+        users_df = pd.DataFrame(columns=["id", "email", "full_name"])
+
+    if not users_df.empty:
+        df = df.merge(
+            users_df[["id", "email", "full_name"]].rename(
+                columns={"email": "account_email", "full_name": "account_name"}
+            ),
+            left_on="user_id",
+            right_on="id",
+            how="left",
+            suffixes=("", "_profile"),
+        )
+    else:
+        df["account_email"] = None
+        df["account_name"] = None
+
+    def _account_key(r) -> str:
+        email = _s(r.get("account_email"))
+        return email if email else f"unlinked:{_s(r.get('trainee_name'))}"
+
+    def _account_label(r) -> str:
+        name = _s(r.get("account_name")) or _s(r.get("trainee_name")) or "(no name)"
+        email = _s(r.get("account_email"))
+        return f"{name} ({email})" if email else f"{name} — no linked account"
+
+    df["_account_key"] = df.apply(_account_key, axis=1)
+    df["_account_label"] = df.apply(_account_label, axis=1)
+
+    accounts = df[["_account_key", "_account_label"]].drop_duplicates().sort_values("_account_label")
+    account_options = ["All Trainees"] + accounts["_account_key"].tolist()
+    account_label_map = {"All Trainees": "All Trainees", **dict(zip(accounts["_account_key"], accounts["_account_label"]))}
+
+    selected_account = st.selectbox(
+        "View submissions from",
+        account_options,
+        format_func=lambda k: account_label_map.get(k, k),
+    )
 
     view_df = (
-        df[df["trainee_name"] == selected_trainee].reset_index(drop=True)
-        if selected_trainee != "All Trainees"
+        df[df["_account_key"] == selected_account].reset_index(drop=True)
+        if selected_account != "All Trainees"
         else df
     )
     n = len(view_df)
     if n == 0:
-        st.info("No submissions for this trainee.")
+        st.info("No submissions for this account.")
         return
 
-    # Reset to the first submission whenever the trainee filter changes.
-    if st.session_state.get("browse_trainee_prev") != selected_trainee:
+    # Reset to the first submission whenever the account filter changes.
+    if st.session_state.get("browse_account_prev") != selected_account:
         st.session_state.browse_idx = 0
-        st.session_state.browse_trainee_prev = selected_trainee
+        st.session_state.browse_account_prev = selected_account
     elif "browse_idx" not in st.session_state or st.session_state.browse_idx >= n:
         st.session_state.browse_idx = 0
 
@@ -656,7 +695,9 @@ def render_browse_submissions_tab(sb: Client):
     row = view_df.iloc[st.session_state.browse_idx]
 
     st.markdown(f"### {_s(row.get('trainee_name')) or '(no name)'}")
-    st.caption(f"Submitted {row['created_at'].strftime('%Y-%m-%d %H:%M')}")
+    account_email = _s(row.get("account_email"))
+    submitted_at = row["created_at"].strftime("%Y-%m-%d %H:%M")
+    st.caption(f"{account_email + ' · ' if account_email else ''}Submitted {submitted_at}")
 
     c1, c2 = st.columns(2)
     with c1:
