@@ -32,7 +32,7 @@ language plpgsql
 security definer set search_path = public
 as $$
 declare
-    admin_emails text[] := array['abc576887@gmail.com'];
+    admin_emails text[] := array['abc576887@gmail.com', 'abcmib43@gmail.com'];
     assigned_role text := 'user';
 begin
     if lower(new.email) = any (select lower(e) from unnest(admin_emails) as e) then
@@ -156,7 +156,7 @@ create policy "responses_delete_admin"
 -- =========================================================================
 update public.users_profile
 set role = 'admin'
-where lower(email) = lower('abc576887@gmail.com');
+where lower(email) in (lower('abc576887@gmail.com'), lower('abcmib43@gmail.com'));
 
 -- To promote any OTHER user to admin later (one not in admin_emails),
 -- run the same pattern manually with their email:

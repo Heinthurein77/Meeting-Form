@@ -25,11 +25,11 @@ Streamlit + Supabase app for collecting and analyzing internal training feedback
 2. Paste the entire contents of `schema.sql` and click **Run**.
 3. This creates `users_profile`, `survey_responses`, the auto-profile trigger, and all RLS policies. Every new sign-up automatically gets a `users_profile` row with `role = 'user'`.
 
-## 3. Default admin account
+## 3. Default admin accounts
 
-`schema.sql` auto-promotes **`abc576887@gmail.com`** to `role = 'admin'` the moment it signs up (see the `admin_emails` array inside `handle_new_user()`), and also backfills that role if the account already existed. So:
+`schema.sql` auto-promotes **`abc576887@gmail.com`** and **`abcmib43@gmail.com`** to `role = 'admin'` the moment either signs up (see the `admin_emails` array inside `handle_new_user()`), and also backfills that role if the account already existed. So:
 
-1. Run the app (step 5) and use **Sign Up** with `abc576887@gmail.com` — you'll land straight on the Admin Dashboard, no manual SQL step needed.
+1. Run the app (step 5) and use **Sign Up** with either of those two emails — you'll land straight on the Admin Dashboard, no manual SQL step needed.
 2. To add more default admins later, add their email to the `admin_emails` array in `schema.sql` and re-run that `create or replace function` block (plus a backfill `update` if they already signed up — see section 4 of the file).
 3. To promote a one-off account without editing the array, run:
    ```sql
