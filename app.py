@@ -557,7 +557,9 @@ def render_submission_list(rows: list[dict], sb: Optional[Client] = None, allow_
     st.caption(f"{len(rows)} submission(s)")
 
     for row in rows:
-        created = pd.to_datetime(row["created_at"]).strftime("%Y-%m-%d %H:%M")
+        # Raw dict from Supabase (not the cached fetch_responses DataFrame),
+        # so it needs its own UTC -> local conversion before display.
+        created = pd.to_datetime(row["created_at"]).tz_convert(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
         with st.expander(f"{created} — {row.get('training_course') or '(no course)'}"):
             c1, c2 = st.columns(2)
             with c1:
@@ -621,7 +623,11 @@ def fetch_responses(_sb: Client, cache_key: str) -> pd.DataFrame:
     resp = _sb.table("survey_responses").select("*").order("created_at", desc=True).execute()
     df = pd.DataFrame(resp.data)
     if not df.empty:
-        df["created_at"] = pd.to_datetime(df["created_at"])
+        # Stored/fetched in UTC; converted to local time once, here, so
+        # every display and export downstream (Analytics table, Browse
+        # Submissions, Compliance, CSV/Excel) shows Myanmar time without
+        # each of them needing to remember to convert it themselves.
+        df["created_at"] = pd.to_datetime(df["created_at"]).dt.tz_convert(LOCAL_TZ)
     return df
 
 
@@ -811,11 +817,11 @@ def render_analytics_tab(sb: Client):
         st.info("No survey responses yet.")
         return
 
-    # created_at is stored/fetched in UTC. Compare the Date Range filter
-    # against the local calendar date instead, otherwise a submission made
-    # late at night local time can silently fall on "yesterday" in UTC and
-    # get excluded from a range that should include it.
-    df["_local_date"] = df["created_at"].dt.tz_convert(LOCAL_TZ).dt.date
+    # fetch_responses() already converts created_at to LOCAL_TZ, so this is
+    # just extracting the calendar date for the Date Range filter to
+    # compare against -- otherwise a submission made late at night local
+    # time could fall on the wrong side of a range that should include it.
+    df["_local_date"] = df["created_at"].dt.date
 
     # ---- Filters ----
     st.subheader("Filters")
