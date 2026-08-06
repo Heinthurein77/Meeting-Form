@@ -368,6 +368,12 @@ def render_survey_form(sb: Client):
 
 
 def render_new_survey_tab(sb: Client):
+    # A toast alone is easy to miss (small, corner-of-screen, fades fast).
+    # Show a persistent banner too, exactly once, on the freshly-reset form
+    # right after a successful submission.
+    if st.session_state.pop("just_submitted", False):
+        st.success("✅ Survey submitted successfully — thank you!")
+
     # Fetch fresh rather than trusting the cached session_state.profile, so
     # a fix an admin just made via Manage Users -> Edit Info shows up here
     # immediately instead of only after the trainee logs out and back in.
@@ -481,6 +487,7 @@ def render_new_survey_tab(sb: Client):
     try:
         sb.table("survey_responses").insert(payload).execute()
         st.toast("Survey submitted — thank you!", icon="✅")
+        st.session_state.just_submitted = True
         st.session_state.form_nonce += 1  # forces a clean form on rerun
         st.rerun()
     except Exception as e:
