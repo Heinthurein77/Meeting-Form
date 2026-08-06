@@ -7,6 +7,7 @@ Run: streamlit run app.py
 
 import base64
 import io
+import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -144,6 +145,29 @@ def delete_user(user_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Session / auth helpers
 # ---------------------------------------------------------------------------
+def _call_with_retry(func, attempts: int = 3, delay_seconds: float = 1.5):
+    """Retries a flaky network call a couple of times before giving up.
+
+    The Supabase auth client (gotrue) builds its own httpx client with a
+    default 5-second timeout and no retry, unlike the Postgres/table client.
+    On Streamlit Cloud, or whenever a free-tier Supabase project has been
+    idle and needs to spin back up, that's often not enough time for the
+    very first request and it fails with a plain read-timeout — even though
+    a near-immediate retry usually succeeds. Only used for calls where
+    retrying a request Supabase might have actually completed is safe
+    (sign-in is idempotent; sign-up is handled separately, see sign_up()).
+    """
+    last_exc: Exception = RuntimeError("no attempt made")
+    for attempt in range(attempts):
+        try:
+            return func()
+        except Exception as e:
+            last_exc = e
+            if attempt < attempts - 1:
+                time.sleep(delay_seconds)
+    raise last_exc
+
+
 def init_session_state():
     defaults = {
         "auth_user": None,      # {"id", "email"}
@@ -161,7 +185,13 @@ def load_profile(sb: Client, user_id: str):
 
 
 def sign_in(sb: Client, email: str, password: str):
-    result = sb.auth.sign_in_with_password({"email": email, "password": password})
+    # Signing in is safe to retry -- it doesn't create anything server-side,
+    # so a request that timed out client-side but actually succeeded, or one
+    # that simply needs a moment because the project was idle, both resolve
+    # cleanly on a second attempt instead of showing a raw timeout error.
+    result = _call_with_retry(
+        lambda: sb.auth.sign_in_with_password({"email": email, "password": password})
+    )
     st.session_state.auth_user = {"id": result.user.id, "email": result.user.email}
     st.session_state.profile = load_profile(sb, result.user.id)
 
@@ -175,19 +205,40 @@ def sign_up(sb: Client, email: str, password: str, full_name: str, department: s
     # database, though -- so as a second, independent path that works
     # immediately regardless of that, we also write directly to
     # users_profile below whenever sign-up returns a session right away.
-    result = sb.auth.sign_up(
-        {
-            "email": email,
-            "password": password,
-            "options": {
-                "data": {
-                    "full_name": full_name,
-                    "department": department,
-                    "position": position,
-                }
-            },
-        }
-    )
+    signup_payload = {
+        "email": email,
+        "password": password,
+        "options": {
+            "data": {
+                "full_name": full_name,
+                "department": department,
+                "position": position,
+            }
+        },
+    }
+
+    # Unlike sign-in, a sign-up call isn't safe to blindly retry in a loop:
+    # if the first attempt actually reached Supabase and created the account
+    # before the client's 5-second timeout gave up on it, retrying the exact
+    # same call fails with "already registered" -- which we treat as
+    # confirmation the account exists and tell the user to log in instead,
+    # rather than surfacing a confusing raw timeout.
+    try:
+        result = sb.auth.sign_up(signup_payload)
+    except Exception as first_error:
+        try:
+            result = sb.auth.sign_up(signup_payload)
+        except Exception as second_error:
+            if "already" in str(second_error).lower() or "already" in str(first_error).lower():
+                raise RuntimeError(
+                    "This email may already be registered — a previous attempt likely went "
+                    "through despite the timeout. Try logging in instead."
+                ) from second_error
+            raise RuntimeError(
+                "The server took too long to respond, twice in a row. This can happen if the "
+                "database was waking up from being idle. Please wait a few seconds and try again."
+            ) from second_error
+
     if result.user is None:
         raise RuntimeError("Sign-up did not return a user. Please try again.")
 
