@@ -12,11 +12,21 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+import httpx
 import pandas as pd
 import streamlit as st
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from supabase import Client, create_client
+from supabase import Client, ClientOptions, create_client
+
+# The Supabase auth (gotrue) client builds its own httpx client with a
+# short, fixed default timeout unless one is passed in explicitly -- this
+# is unaffected by postgrest_client_timeout and easy to exceed on
+# cross-region latency between Streamlit Cloud and a Supabase project,
+# surfacing as "the read operation timed out" on sign-up/sign-in. Passing
+# a shared httpx client via ClientOptions applies this same timeout to
+# every sub-client (auth, postgrest, storage) created from it.
+SUPABASE_HTTP_TIMEOUT_SECONDS = 30
 
 # Submissions are stored/fetched in UTC; the dashboard's Date Range filter
 # compares against calendar dates in this timezone so "today" means the
@@ -116,7 +126,8 @@ def get_supabase() -> Client:
             )
             st.stop()
 
-        st.session_state.sb_client = create_client(url, key)
+        options = ClientOptions(httpx_client=httpx.Client(timeout=SUPABASE_HTTP_TIMEOUT_SECONDS))
+        st.session_state.sb_client = create_client(url, key, options=options)
     return st.session_state.sb_client
 
 
@@ -138,7 +149,8 @@ def delete_user(user_id: str) -> None:
             "[supabase] in secrets to enable deleting users."
         )
     url = st.secrets["supabase"]["url"]
-    admin_client = create_client(url, service_key)
+    options = ClientOptions(httpx_client=httpx.Client(timeout=SUPABASE_HTTP_TIMEOUT_SECONDS))
+    admin_client = create_client(url, service_key, options=options)
     admin_client.auth.admin.delete_user(user_id)
 
 
