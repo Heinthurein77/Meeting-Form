@@ -394,7 +394,7 @@ def render_new_survey_tab(sb: Client):
         st.subheader("Basic Information")
 
         trainee_name = st.text_input(
-            "Trainee Name *", value=full_name, key=f"name_{nonce}", disabled=True
+            "Name *", value=full_name, key=f"name_{nonce}", disabled=True
         )
         c1, c2 = st.columns(2)
         with c1:
@@ -690,15 +690,107 @@ def render_admin_dashboard(sb: Client):
         if st.button("Log Out", use_container_width=True):
             sign_out(sb)
 
-    tab_analytics, tab_browse, tab_users = st.tabs(
-        ["📊 Analytics", "📄 Browse Submissions", "🗂️ Manage Users"]
+    try:
+        compliance_df, overdue_count = compute_compliance(sb)
+    except Exception:
+        compliance_df, overdue_count = None, None  # surfaced again, with the real error, inside the tab
+
+    if overdue_count:
+        st.warning(
+            f"⚠️ {overdue_count} trainee(s) have gone 7+ days without a survey submission "
+            "(or never submitted). See the Compliance tab for details."
+        )
+
+    tab_analytics, tab_browse, tab_compliance, tab_users = st.tabs(
+        ["📊 Analytics", "📄 Browse Submissions", "⚠️ Compliance", "🗂️ Manage Users"]
     )
     with tab_analytics:
         render_analytics_tab(sb)
     with tab_browse:
         render_browse_submissions_tab(sb)
+    with tab_compliance:
+        render_compliance_tab(sb, compliance_df)
     with tab_users:
         render_manage_users_tab(sb)
+
+
+COMPLIANCE_WINDOW_DAYS = 7
+
+
+def compute_compliance(sb: Client) -> tuple[pd.DataFrame, int]:
+    """For every trainee (non-admin user), finds their most recent
+    submission and flags them overdue if it's 7+ days old (in LOCAL_TZ) or
+    they've never submitted. New accounts get a grace period: an account
+    with zero submissions isn't flagged until the account itself is at
+    least 7 days old, so a trainee who signed up an hour ago isn't
+    immediately shown as non-compliant."""
+    users_df = fetch_users(sb, "manage_users")
+    responses_df = fetch_responses(sb, st.session_state.auth_user["id"])
+
+    trainees_df = users_df[users_df["role"] != "admin"] if not users_df.empty else users_df
+    if trainees_df.empty:
+        return pd.DataFrame(), 0
+
+    now_local = datetime.now(LOCAL_TZ)
+    cutoff = now_local - timedelta(days=COMPLIANCE_WINDOW_DAYS)
+
+    if not responses_df.empty:
+        last_submission = responses_df.groupby("user_id")["created_at"].max()
+    else:
+        last_submission = pd.Series(dtype="object")
+
+    rows = []
+    for _, u in trainees_df.iterrows():
+        last = last_submission.get(u["id"])
+
+        if last is not None and pd.notna(last):
+            last_local = last.tz_convert(LOCAL_TZ)
+            days_since = (now_local - last_local).days
+            overdue = last_local < cutoff
+            last_str = last_local.strftime("%Y-%m-%d %H:%M")
+        else:
+            last_str = "Never"
+            days_since = None
+            account_created = pd.to_datetime(u.get("created_at"), utc=True, errors="coerce")
+            overdue = pd.isna(account_created) or account_created.tz_convert(LOCAL_TZ) < cutoff
+
+        rows.append(
+            {
+                "Name": _s(u.get("full_name")) or "(no name)",
+                "Email": _s(u.get("email")),
+                "Department": _s(u.get("department")),
+                "Last Submission": last_str,
+                "_days_since_sort": days_since if days_since is not None else 10**9,
+                "Days Since": days_since if days_since is not None else "Never",
+                "Overdue": overdue,
+            }
+        )
+
+    result_df = pd.DataFrame(rows)
+    result_df = result_df.sort_values(
+        ["Overdue", "_days_since_sort"], ascending=[False, False]
+    ).drop(columns="_days_since_sort")
+    overdue_count = int(result_df["Overdue"].sum())
+    result_df["Overdue"] = result_df["Overdue"].map({True: "⚠️ Yes", False: "✅ No"})
+    return result_df, overdue_count
+
+
+def render_compliance_tab(sb: Client, compliance_df: Optional[pd.DataFrame] = None):
+    if compliance_df is None:
+        try:
+            compliance_df, _ = compute_compliance(sb)
+        except Exception as e:
+            st.error(f"Could not compute compliance: {e}")
+            return
+
+    if compliance_df.empty:
+        st.info("No trainee accounts found.")
+        return
+
+    overdue_count = (compliance_df["Overdue"] == "⚠️ Yes").sum()
+    st.metric(f"Overdue ({COMPLIANCE_WINDOW_DAYS}+ days without a submission)", f"{overdue_count} / {len(compliance_df)}")
+    st.caption('Sorted most-overdue first. "Never" means the account has no submissions at all.')
+    st.dataframe(compliance_df, use_container_width=True, hide_index=True)
 
 
 def render_analytics_tab(sb: Client):
