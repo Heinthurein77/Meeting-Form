@@ -39,11 +39,27 @@ LOCAL_TZ = ZoneInfo("Asia/Yangon")
 st.set_page_config(
     page_title="ABC-MIB Training Survey",
     page_icon="📋",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 COMPANY_NAME = st.secrets.get("app", {}).get("company_name", "ABC-MIB Group Co., Ltd.")
+
+# Navy & Gold brand palette. Also mirrored in .streamlit/config.toml (theme
+# primaryColor etc.) for native widget theming -- these hex values here are
+# for the custom CSS below and for coloring the analytics bar charts.
+NAVY = "#0F2A4A"
+NAVY_DARK = "#0B2038"
+GOLD = "#C9A227"
+GOLD_LIGHT = "#E4C666"
+# Deeper gold used only for chart bars: #C9A227 fails contrast against a
+# white chart surface (validated with the dataviz skill's palette
+# checker -- 2.36:1, below the 3:1 floor), where GOLD itself is fine as a
+# thin accent (underline, border) rather than a large filled area.
+GOLD_CHART = "#8A6A14"
+SURFACE = "#F4F6F9"
+BORDER = "#E2E6EC"
+TEXT_MUTED = "#5B6B7C"
 
 RATING_OPTIONS = ["4 - Excellent", "3 - Good", "2 - Average", "1 - Poor"]
 RATING_QUESTIONS = [
@@ -62,13 +78,111 @@ OPEN_QUESTIONS = [
     ("q11_future_topics", "11. What topics would you like to see in future training?"),
 ]
 
-CUSTOM_CSS = """
+CUSTOM_CSS = f"""
 <style>
-    .block-container {max-width: 700px; padding-top: 2rem; padding-bottom: 3rem;}
-    .survey-header {text-align: center; margin-bottom: 1.5rem;}
-    .survey-header h1 {font-size: 1.4rem; margin-bottom: 0.1rem;}
-    .survey-header h3 {font-size: 1.05rem; color: #555; font-weight: 400; margin-top: 0;}
-    div[data-testid="stForm"] {border: 1px solid #e6e6e6; border-radius: 12px; padding: 1.5rem;}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] {{
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }}
+
+    .block-container {{padding-top: 2rem; padding-bottom: 3rem;}}
+
+    /* Narrow, centered "card" shell for trainee-facing pages (login, survey
+       form). The app uses wide layout so the admin dashboard's tables and
+       charts get full desktop width; this container opts specific pages
+       back into a constrained, polished width instead of a blanket
+       .block-container rule that would cramp the admin views too. */
+    .st-key-app-shell {{
+        max-width: 720px;
+        margin: 0 auto;
+    }}
+
+    .survey-header {{
+        text-align: center;
+        background: linear-gradient(135deg, {NAVY} 0%, {NAVY_DARK} 100%);
+        color: #FFFFFF;
+        padding: 1.75rem 1.5rem 1.5rem;
+        border-radius: 14px;
+        margin-bottom: 1.75rem;
+        box-shadow: 0 4px 16px rgba(15, 42, 74, 0.18);
+    }}
+    .survey-header h1 {{
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin: 0 0 0.2rem;
+        letter-spacing: 0.02em;
+    }}
+    .survey-header h3 {{
+        font-size: 1rem;
+        font-weight: 400;
+        margin: 0;
+        color: {GOLD_LIGHT};
+    }}
+    .survey-header::after {{
+        content: "";
+        display: block;
+        width: 56px;
+        height: 3px;
+        background: {GOLD};
+        margin: 0.9rem auto 0;
+        border-radius: 2px;
+    }}
+
+    /* Form card */
+    div[data-testid="stForm"] {{
+        border: 1px solid {BORDER};
+        border-radius: 14px;
+        padding: 1.75rem;
+        background: #FFFFFF;
+        box-shadow: 0 2px 10px rgba(15, 42, 74, 0.06);
+    }}
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {{
+        background: {NAVY};
+    }}
+    section[data-testid="stSidebar"] * {{
+        color: {SURFACE} !important;
+    }}
+    section[data-testid="stSidebar"] button {{
+        border-color: {GOLD} !important;
+    }}
+
+    /* Tabs: gold underline on the selected tab, navy label */
+    button[data-baseweb="tab"][aria-selected="true"] {{
+        color: {NAVY} !important;
+        font-weight: 600;
+    }}
+    div[data-baseweb="tab-highlight"] {{
+        background-color: {GOLD} !important;
+        height: 3px !important;
+    }}
+
+    /* Metric tiles: card look for dashboard Overview rows */
+    div[data-testid="stMetric"] {{
+        background: #FFFFFF;
+        border: 1px solid {BORDER};
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        box-shadow: 0 2px 8px rgba(15, 42, 74, 0.05);
+    }}
+    div[data-testid="stMetricLabel"] {{
+        color: {TEXT_MUTED};
+    }}
+
+    /* Tables */
+    div[data-testid="stDataFrame"] {{
+        border: 1px solid {BORDER};
+        border-radius: 10px;
+        overflow: hidden;
+    }}
+
+    /* Expander rows (My Submissions / admin's View Submissions) */
+    details[data-testid="stExpander"] {{
+        border: 1px solid {BORDER} !important;
+        border-radius: 10px !important;
+    }}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -876,13 +990,13 @@ def render_analytics_tab(sb: Client):
     course_avg = (
         filtered.groupby("training_course")["overall_avg"].mean().sort_values(ascending=False).round(2)
     )
-    st.bar_chart(course_avg)
+    st.bar_chart(course_avg, color=NAVY)
 
     # ---- Criteria ratings Q1-Q6 ----
     st.subheader("Average Rating by Criteria (Q1–Q6)")
     criteria_avg = filtered[rating_cols].mean().round(2)
     criteria_avg.index = [QUESTION_LABELS[c] for c in criteria_avg.index]
-    st.bar_chart(criteria_avg)
+    st.bar_chart(criteria_avg, color=GOLD_CHART)
 
     # ---- Top presenters table ----
     st.subheader("Top Rated Presenters")
@@ -1269,24 +1383,31 @@ def main():
     init_session_state()
     sb = get_supabase()
 
+    # The app runs in wide layout so the admin dashboard's tables/charts get
+    # full desktop width; trainee-facing pages opt into a centered, narrower
+    # "card" width via this keyed container (styled as .st-key-app-shell in
+    # CUSTOM_CSS) instead of constraining the whole app.
     if st.session_state.auth_user is None:
-        render_auth_screen(sb)
+        with st.container(key="app-shell"):
+            render_auth_screen(sb)
         return
 
     if st.session_state.profile is None:
         try:
             st.session_state.profile = load_profile(sb, st.session_state.auth_user["id"])
         except Exception as e:
-            st.error(f"Could not load your profile: {e}")
-            if st.button("Log Out"):
-                sign_out(sb)
+            with st.container(key="app-shell"):
+                st.error(f"Could not load your profile: {e}")
+                if st.button("Log Out"):
+                    sign_out(sb)
             return
 
     role = (st.session_state.profile or {}).get("role", "user")
     if role == "admin":
         render_admin_dashboard(sb)
     else:
-        render_survey_form(sb)
+        with st.container(key="app-shell"):
+            render_survey_form(sb)
 
 
 if __name__ == "__main__":

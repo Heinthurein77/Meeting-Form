@@ -1,0 +1,8 @@
+# Navy & Gold theme for ABC-MIB Training Survey.
+# Safe to commit -- contains no secrets, just visual configuration.
+[theme]
+primaryColor = "#0F2A4A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F9"
+textColor = "#1A2733"
+font = "sans serif"
