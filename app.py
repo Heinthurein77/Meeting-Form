@@ -72,11 +72,11 @@ RATING_QUESTIONS = [
     ("q6_presenter_rating", "6. How would you rate the presenter?"),
 ]
 OPEN_QUESTIONS = [
-    ("q7_understanding_notes", "7. What did you understand from this training?"),
-    ("q8_interesting_thing", "8. What was the most interesting thing you learned?"),
-    ("q9_knowledge_application", "9. How will you apply this knowledge in your work?"),
-    ("q10_challenge_addressed", "10. What challenge (if any) did this training help address?"),
-    ("q11_future_topics", "11. What topics would you like to see in future training?"),
+    ("q7_understanding_notes", "7. How do you think and understand about this course?"),
+    ("q8_interesting_thing", "8. What was the most interesting thing you learned in this seminar?"),
+    ("q9_knowledge_application", "9. The Knowledge and skills i gained from this seminar will be useful in my job?"),
+    ("q10_challenge_addressed", "10. Which one specific challenge you are currently facing in your job that this seminar helped you address?"),
+    ("q11_future_topics", "11. What other topics or skills would you like to learn in future seminar?"),
 ]
 
 CUSTOM_CSS = f"""
