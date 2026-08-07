@@ -1,8 +1,8 @@
-# Deep Emerald & Slate theme for ABC-MIB Training Survey.
+# Sky Blue theme for ABC-MIB Training Survey.
 # Safe to commit -- contains no secrets, just visual configuration.
 [theme]
-primaryColor = "#0B4F3C"
+primaryColor = "#075985"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F5F7F6"
-textColor = "#1C2B26"
+secondaryBackgroundColor = "#F0F9FF"
+textColor = "#0C2233"
 font = "sans serif"

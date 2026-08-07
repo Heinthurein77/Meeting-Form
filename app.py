@@ -45,20 +45,22 @@ st.set_page_config(
 
 COMPANY_NAME = st.secrets.get("app", {}).get("company_name", "ABC-MIB Group Co., Ltd.")
 
-# Deep Emerald & Slate brand palette. Also mirrored in .streamlit/config.toml
-# (theme primaryColor etc.) for native widget theming -- these hex values
-# here are for the custom CSS below and for coloring the analytics bar
-# charts. Both EMERALD and SLATE independently pass the dataviz skill's
-# standalone contrast check (>=3:1 against a white chart surface), so
-# unlike the previous gold-based palette, no separate darker "chart-safe"
-# variant is needed here.
-EMERALD = "#0B4F3C"
-EMERALD_DARK = "#073A2C"
-SLATE = "#3A4750"
-SLATE_LIGHT = "#C7D0D6"
-SURFACE = "#F5F7F6"
-BORDER = "#E1E6E3"
-TEXT_MUTED = "#5B6B66"
+# All-sky-blue brand palette (single hue family, varied by shade rather
+# than a second accent hue). Also mirrored in .streamlit/config.toml (theme
+# primaryColor etc.) for native widget theming. SKY_DEEP and SKY both
+# independently pass the dataviz skill's standalone contrast check (>=3:1
+# against a white chart surface) -- an earlier, lighter candidate (#0EA5E9)
+# did not (2.7:1, WARN), so it was dropped in favor of this deeper shade.
+# SKY_LIGHT is only used as text/borders on the dark SKY_DEEP/SKY_DEEPER
+# backgrounds (header, sidebar) -- checked at 5.7-9.4:1 there; it fails
+# badly (2.1:1) against the lighter SKY shade, so never use it on that.
+SKY_DEEP = "#075985"
+SKY_DEEPER = "#04384F"
+SKY = "#0284C7"
+SKY_LIGHT = "#BAE6FD"
+SURFACE = "#F0F9FF"
+BORDER = "#D3E9F7"
+TEXT_MUTED = "#3E6B85"
 
 RATING_OPTIONS = ["4 - Excellent", "3 - Good", "2 - Average", "1 - Poor"]
 RATING_QUESTIONS = [
@@ -99,7 +101,7 @@ CUSTOM_CSS = f"""
 
     .survey-header {{
         text-align: center;
-        background: linear-gradient(135deg, {EMERALD} 0%, {EMERALD_DARK} 100%);
+        background: linear-gradient(135deg, {SKY_DEEP} 0%, {SKY_DEEPER} 100%);
         color: #FFFFFF;
         padding: 1.75rem 1.5rem 1.5rem;
         border-radius: 14px;
@@ -116,14 +118,14 @@ CUSTOM_CSS = f"""
         font-size: 1rem;
         font-weight: 400;
         margin: 0;
-        color: {SLATE_LIGHT};
+        color: {SKY_LIGHT};
     }}
     .survey-header::after {{
         content: "";
         display: block;
         width: 56px;
         height: 3px;
-        background: {SLATE_LIGHT};
+        background: {SKY_LIGHT};
         margin: 0.9rem auto 0;
         border-radius: 2px;
     }}
@@ -139,22 +141,22 @@ CUSTOM_CSS = f"""
 
     /* Sidebar */
     section[data-testid="stSidebar"] {{
-        background: {EMERALD};
+        background: {SKY_DEEP};
     }}
     section[data-testid="stSidebar"] * {{
         color: {SURFACE} !important;
     }}
     section[data-testid="stSidebar"] button {{
-        border-color: {SLATE_LIGHT} !important;
+        border-color: {SKY_LIGHT} !important;
     }}
 
-    /* Tabs: slate underline on the selected tab, emerald label */
+    /* Tabs: medium-sky underline on the selected tab, deep-sky label */
     button[data-baseweb="tab"][aria-selected="true"] {{
-        color: {EMERALD} !important;
+        color: {SKY_DEEP} !important;
         font-weight: 600;
     }}
     div[data-baseweb="tab-highlight"] {{
-        background-color: {SLATE} !important;
+        background-color: {SKY} !important;
         height: 3px !important;
     }}
 
@@ -188,17 +190,17 @@ CUSTOM_CSS = f"""
        WebKit/Blink specifically via -webkit-text-fill-color rather than
        just `color`, so overriding only `color` doesn't fix it -- which
        reads as barely-visible against our light SURFACE input background.
-       Force legible dark emerald text; a slate left border communicates
+       Force legible deep-sky text; a medium-sky left border communicates
        "read-only" instead of relying on faded text to do it. */
     div[data-testid="stTextInput"] input:disabled {{
-        color: {EMERALD} !important;
-        -webkit-text-fill-color: {EMERALD} !important;
+        color: {SKY_DEEP} !important;
+        -webkit-text-fill-color: {SKY_DEEP} !important;
         opacity: 1 !important;
         background-color: {SURFACE} !important;
-        border-left: 3px solid {SLATE} !important;
+        border-left: 3px solid {SKY} !important;
     }}
     div[data-testid="stTextInput"] label {{
-        color: {EMERALD} !important;
+        color: {SKY_DEEP} !important;
     }}
 </style>
 """
@@ -1007,13 +1009,13 @@ def render_analytics_tab(sb: Client):
     course_avg = (
         filtered.groupby("training_course")["overall_avg"].mean().sort_values(ascending=False).round(2)
     )
-    st.bar_chart(course_avg, color=EMERALD)
+    st.bar_chart(course_avg, color=SKY_DEEP)
 
     # ---- Criteria ratings Q1-Q6 ----
     st.subheader("Average Rating by Criteria (Q1–Q6)")
     criteria_avg = filtered[rating_cols].mean().round(2)
     criteria_avg.index = [QUESTION_LABELS[c] for c in criteria_avg.index]
-    st.bar_chart(criteria_avg, color=SLATE)
+    st.bar_chart(criteria_avg, color=SKY)
 
     # ---- Top presenters table ----
     st.subheader("Top Rated Presenters")
