@@ -183,6 +183,24 @@ CUSTOM_CSS = f"""
         border: 1px solid {BORDER} !important;
         border-radius: 10px !important;
     }}
+
+    /* Disabled text inputs (locked Name/Position/Department): Streamlit/
+       Baseweb washes these out by default -- light gray text, and on
+       WebKit/Blink specifically via -webkit-text-fill-color rather than
+       just `color`, so overriding only `color` doesn't fix it -- which
+       reads as barely-visible against our light SURFACE input background.
+       Force legible dark navy text; a gold left border communicates
+       "read-only" instead of relying on faded text to do it. */
+    div[data-testid="stTextInput"] input:disabled {{
+        color: {NAVY} !important;
+        -webkit-text-fill-color: {NAVY} !important;
+        opacity: 1 !important;
+        background-color: {SURFACE} !important;
+        border-left: 3px solid {GOLD} !important;
+    }}
+    div[data-testid="stTextInput"] label {{
+        color: {NAVY} !important;
+    }}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
