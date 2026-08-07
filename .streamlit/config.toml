@@ -1,8 +1,8 @@
-# Navy & Gold theme for ABC-MIB Training Survey.
+# Deep Emerald & Slate theme for ABC-MIB Training Survey.
 # Safe to commit -- contains no secrets, just visual configuration.
 [theme]
-primaryColor = "#0F2A4A"
+primaryColor = "#0B4F3C"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F6F9"
-textColor = "#1A2733"
+secondaryBackgroundColor = "#F5F7F6"
+textColor = "#1C2B26"
 font = "sans serif"

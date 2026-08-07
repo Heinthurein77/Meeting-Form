@@ -45,21 +45,20 @@ st.set_page_config(
 
 COMPANY_NAME = st.secrets.get("app", {}).get("company_name", "ABC-MIB Group Co., Ltd.")
 
-# Navy & Gold brand palette. Also mirrored in .streamlit/config.toml (theme
-# primaryColor etc.) for native widget theming -- these hex values here are
-# for the custom CSS below and for coloring the analytics bar charts.
-NAVY = "#0F2A4A"
-NAVY_DARK = "#0B2038"
-GOLD = "#C9A227"
-GOLD_LIGHT = "#E4C666"
-# Deeper gold used only for chart bars: #C9A227 fails contrast against a
-# white chart surface (validated with the dataviz skill's palette
-# checker -- 2.36:1, below the 3:1 floor), where GOLD itself is fine as a
-# thin accent (underline, border) rather than a large filled area.
-GOLD_CHART = "#8A6A14"
-SURFACE = "#F4F6F9"
-BORDER = "#E2E6EC"
-TEXT_MUTED = "#5B6B7C"
+# Deep Emerald & Slate brand palette. Also mirrored in .streamlit/config.toml
+# (theme primaryColor etc.) for native widget theming -- these hex values
+# here are for the custom CSS below and for coloring the analytics bar
+# charts. Both EMERALD and SLATE independently pass the dataviz skill's
+# standalone contrast check (>=3:1 against a white chart surface), so
+# unlike the previous gold-based palette, no separate darker "chart-safe"
+# variant is needed here.
+EMERALD = "#0B4F3C"
+EMERALD_DARK = "#073A2C"
+SLATE = "#3A4750"
+SLATE_LIGHT = "#C7D0D6"
+SURFACE = "#F5F7F6"
+BORDER = "#E1E6E3"
+TEXT_MUTED = "#5B6B66"
 
 RATING_OPTIONS = ["4 - Excellent", "3 - Good", "2 - Average", "1 - Poor"]
 RATING_QUESTIONS = [
@@ -100,7 +99,7 @@ CUSTOM_CSS = f"""
 
     .survey-header {{
         text-align: center;
-        background: linear-gradient(135deg, {NAVY} 0%, {NAVY_DARK} 100%);
+        background: linear-gradient(135deg, {EMERALD} 0%, {EMERALD_DARK} 100%);
         color: #FFFFFF;
         padding: 1.75rem 1.5rem 1.5rem;
         border-radius: 14px;
@@ -117,14 +116,14 @@ CUSTOM_CSS = f"""
         font-size: 1rem;
         font-weight: 400;
         margin: 0;
-        color: {GOLD_LIGHT};
+        color: {SLATE_LIGHT};
     }}
     .survey-header::after {{
         content: "";
         display: block;
         width: 56px;
         height: 3px;
-        background: {GOLD};
+        background: {SLATE_LIGHT};
         margin: 0.9rem auto 0;
         border-radius: 2px;
     }}
@@ -140,22 +139,22 @@ CUSTOM_CSS = f"""
 
     /* Sidebar */
     section[data-testid="stSidebar"] {{
-        background: {NAVY};
+        background: {EMERALD};
     }}
     section[data-testid="stSidebar"] * {{
         color: {SURFACE} !important;
     }}
     section[data-testid="stSidebar"] button {{
-        border-color: {GOLD} !important;
+        border-color: {SLATE_LIGHT} !important;
     }}
 
-    /* Tabs: gold underline on the selected tab, navy label */
+    /* Tabs: slate underline on the selected tab, emerald label */
     button[data-baseweb="tab"][aria-selected="true"] {{
-        color: {NAVY} !important;
+        color: {EMERALD} !important;
         font-weight: 600;
     }}
     div[data-baseweb="tab-highlight"] {{
-        background-color: {GOLD} !important;
+        background-color: {SLATE} !important;
         height: 3px !important;
     }}
 
@@ -189,17 +188,17 @@ CUSTOM_CSS = f"""
        WebKit/Blink specifically via -webkit-text-fill-color rather than
        just `color`, so overriding only `color` doesn't fix it -- which
        reads as barely-visible against our light SURFACE input background.
-       Force legible dark navy text; a gold left border communicates
+       Force legible dark emerald text; a slate left border communicates
        "read-only" instead of relying on faded text to do it. */
     div[data-testid="stTextInput"] input:disabled {{
-        color: {NAVY} !important;
-        -webkit-text-fill-color: {NAVY} !important;
+        color: {EMERALD} !important;
+        -webkit-text-fill-color: {EMERALD} !important;
         opacity: 1 !important;
         background-color: {SURFACE} !important;
-        border-left: 3px solid {GOLD} !important;
+        border-left: 3px solid {SLATE} !important;
     }}
     div[data-testid="stTextInput"] label {{
-        color: {NAVY} !important;
+        color: {EMERALD} !important;
     }}
 </style>
 """
@@ -1008,13 +1007,13 @@ def render_analytics_tab(sb: Client):
     course_avg = (
         filtered.groupby("training_course")["overall_avg"].mean().sort_values(ascending=False).round(2)
     )
-    st.bar_chart(course_avg, color=NAVY)
+    st.bar_chart(course_avg, color=EMERALD)
 
     # ---- Criteria ratings Q1-Q6 ----
     st.subheader("Average Rating by Criteria (Q1–Q6)")
     criteria_avg = filtered[rating_cols].mean().round(2)
     criteria_avg.index = [QUESTION_LABELS[c] for c in criteria_avg.index]
-    st.bar_chart(criteria_avg, color=GOLD_CHART)
+    st.bar_chart(criteria_avg, color=SLATE)
 
     # ---- Top presenters table ----
     st.subheader("Top Rated Presenters")
