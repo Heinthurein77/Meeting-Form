@@ -139,7 +139,12 @@ CUSTOM_CSS = f"""
         box-shadow: 0 2px 10px rgba(15, 42, 74, 0.06);
     }}
 
-    /* Sidebar */
+    /* Sidebar. Buttons (Refresh, Log Out) keep Streamlit's own white
+       button background -- the blanket light-text rule above them would
+       otherwise make their text near-white-on-white and unreadable
+       (confirmed with a screenshot before this fix), so button text is
+       overridden back to dark separately, after and more specifically
+       than the general rule. */
     section[data-testid="stSidebar"] {{
         background: {SKY_DEEP};
     }}
@@ -148,6 +153,10 @@ CUSTOM_CSS = f"""
     }}
     section[data-testid="stSidebar"] button {{
         border-color: {SKY_LIGHT} !important;
+        background-color: #FFFFFF !important;
+    }}
+    section[data-testid="stSidebar"] button * {{
+        color: {SKY_DEEP} !important;
     }}
 
     /* Tabs: medium-sky underline on the selected tab, deep-sky label */
