@@ -507,9 +507,15 @@ def render_survey_form(sb: Client):
         if st.button("Log Out", use_container_width=True):
             sign_out(sb)
 
-    tab_new, tab_mine = st.tabs(["📝 New Survey", "🗂️ My Submissions"])
+    tab_new, tab_presentations, tab_mine = st.tabs(
+        ["📝 New Survey", "📎 Presentations", "🗂️ My Submissions"]
+    )
     with tab_new:
         render_new_survey_tab(sb)
+    with tab_presentations:
+        render_upload_presentation_tab(sb)
+        st.divider()
+        render_presentation_files_list(sb)
     with tab_mine:
         render_my_submissions_tab(sb)
 
@@ -561,11 +567,6 @@ def render_new_survey_tab(sb: Client):
 
         training_course = st.text_input("Training Course *", key=f"course_{nonce}")
         presenter_name = st.text_input("Presenter Name", key=f"presenter_{nonce}")
-        presenter_file = st.file_uploader(
-            "Presenter's PowerPoint File (optional)",
-            type=PRESENTER_FILE_TYPES,
-            key=f"pptfile_{nonce}",
-        )
 
         c3, c4 = st.columns(2)
         with c3:
@@ -614,10 +615,6 @@ def render_new_survey_tab(sb: Client):
         if rating_values[field] is None:
             missing.append(label)
 
-    if presenter_file is not None and presenter_file.size > MAX_PRESENTER_FILE_MB * 1024 * 1024:
-        st.error(f"Presenter's PowerPoint file is too large (max {MAX_PRESENTER_FILE_MB} MB).")
-        return
-
     if missing:
         st.error("Please complete the following required fields:\n\n- " + "\n- ".join(missing))
         return
@@ -639,15 +636,6 @@ def render_new_survey_tab(sb: Client):
         **{field: rating_to_int(rating_values[field]) for field, _ in RATING_QUESTIONS},
         **{field: open_values[field].strip() for field, _ in OPEN_QUESTIONS},
     }
-
-    if presenter_file is not None:
-        try:
-            payload["presenter_file_path"] = upload_presenter_file(
-                sb, st.session_state.auth_user["id"], presenter_file
-            )
-        except Exception as e:
-            st.error(f"Could not upload the presenter's PowerPoint file ({type(e).__name__}): {e}")
-            return
 
     try:
         sb.table("survey_responses").insert(payload).execute()
@@ -673,10 +661,10 @@ def fetch_submissions_for_user(sb: Client, user_id: str) -> list[dict]:
 def upload_presenter_file(sb: Client, user_id: str, uploaded_file) -> str:
     """Uploads a presenter's PowerPoint file to Supabase Storage and
     returns its storage path. Raises on failure -- callers should not
-    insert the survey response if this fails, to avoid saving a broken
-    file reference. Path is prefixed with the uploader's user_id purely
-    for organization; the presenter-files bucket's RLS (schema.sql) makes
-    it readable by any authenticated user regardless of the prefix."""
+    insert a presentation_files row if this fails, to avoid saving a
+    broken file reference. Path is prefixed with the uploader's user_id
+    purely for organization; the presenter-files bucket's RLS (schema.sql)
+    makes it readable by any authenticated user regardless of the prefix."""
     ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
     path = f"{user_id}/{uuid.uuid4()}.{ext}"
     sb.storage.from_(PRESENTER_FILES_BUCKET).upload(
@@ -699,16 +687,121 @@ def get_presenter_file_url(sb: Client, path: str) -> Optional[str]:
 
 
 def render_presenter_file_link(sb: Client, path: Optional[str]):
-    """Shows a link to the attached presenter file, if any. Used wherever
-    a submission is displayed (My Submissions, admin's View Submissions,
-    Browse Submissions)."""
+    """Shows a link to a presentation file, if any."""
     if not path:
         return
     url = get_presenter_file_url(sb, path)
     if url:
-        st.markdown(f"📎 [Presenter's PowerPoint File]({url})")
+        st.markdown(f"📎 [Presentation File]({url})")
     else:
-        st.caption("📎 Presenter's PowerPoint file was attached but could not be loaded.")
+        st.caption("📎 File was attached but could not be loaded.")
+
+
+def fetch_presentation_files(sb: Client) -> list[dict]:
+    resp = sb.table("presentation_files").select("*").order("created_at", desc=True).execute()
+    return resp.data or []
+
+
+def delete_presentation_file(sb: Client, file_id: str) -> None:
+    """Permanently deletes one presentation_files row. Backed by the
+    presentation_files_delete_admin RLS policy in schema.sql."""
+    sb.table("presentation_files").delete().eq("id", file_id).execute()
+
+
+def render_upload_presentation_tab(sb: Client):
+    """Standalone upload for a presenter's PowerPoint file, decoupled from
+    any individual trainee's survey answers -- one file per training
+    course/session, uploaded once by whoever has it on hand, without
+    needing to also answer the rating/feedback questions."""
+    st.subheader("Upload a Presentation File")
+    with st.form("presentation_upload_form", clear_on_submit=True):
+        training_course = st.text_input("Training Course *")
+        presenter_name = st.text_input("Presenter Name")
+        uploaded_file = st.file_uploader("PowerPoint File *", type=PRESENTER_FILE_TYPES)
+        submitted = st.form_submit_button("Upload", use_container_width=True, type="primary")
+
+    if not submitted:
+        return
+
+    if not training_course.strip():
+        st.error("Training Course is required.")
+        return
+    if uploaded_file is None:
+        st.error("Please choose a PowerPoint file to upload.")
+        return
+    if uploaded_file.size > MAX_PRESENTER_FILE_MB * 1024 * 1024:
+        st.error(f"File is too large (max {MAX_PRESENTER_FILE_MB} MB).")
+        return
+
+    try:
+        path = upload_presenter_file(sb, st.session_state.auth_user["id"], uploaded_file)
+        sb.table("presentation_files").insert(
+            {
+                "training_course": training_course.strip(),
+                "presenter_name": presenter_name.strip(),
+                "file_path": path,
+                "uploaded_by": st.session_state.auth_user["id"],
+            }
+        ).execute()
+        st.cache_data.clear()
+        st.toast("Presentation file uploaded!", icon="✅")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Could not upload the presentation file ({type(e).__name__}): {e}")
+
+
+def render_delete_presentation_file_control(sb: Client, file_id: str):
+    """Two-step delete confirm for one presentation file, admin-only."""
+    confirm_key = f"del_pres_confirm_{file_id}"
+
+    if not st.session_state.get(confirm_key):
+        if st.button("🗑️ Delete", key=f"del_pres_btn_{file_id}"):
+            st.session_state[confirm_key] = True
+            st.rerun()
+        return
+
+    st.warning("Delete this presentation file? This cannot be undone.")
+    c1, c2 = st.columns(2)
+    with c1:
+        confirmed = st.button("Yes, delete", key=f"del_pres_yes_{file_id}", type="primary")
+    with c2:
+        if st.button("Cancel", key=f"del_pres_no_{file_id}"):
+            st.session_state[confirm_key] = False
+            st.rerun()
+
+    if confirmed:
+        try:
+            delete_presentation_file(sb, file_id)
+            st.cache_data.clear()
+            st.session_state[confirm_key] = False
+            st.toast("Deleted", icon="🗑️")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not delete ({type(e).__name__}): {e}")
+
+
+def render_presentation_files_list(sb: Client, allow_delete: bool = False):
+    try:
+        files = fetch_presentation_files(sb)
+    except Exception as e:
+        st.error(f"Could not load presentation files: {e}")
+        return
+
+    if not files:
+        st.info("No presentation files uploaded yet.")
+        return
+
+    st.caption(f"{len(files)} file(s)")
+    for f in files:
+        created = pd.to_datetime(f["created_at"]).tz_convert(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+        course = f.get("training_course") or "(no course)"
+        presenter = f.get("presenter_name") or "(no presenter)"
+        with st.container(border=True):
+            st.write(f"**{course}** — {presenter}")
+            st.caption(created)
+            render_presenter_file_link(sb, f.get("file_path"))
+            if allow_delete:
+                render_delete_presentation_file_control(sb, f["id"])
 
 
 def delete_submission(sb: Client, response_id: str) -> None:
@@ -786,10 +879,6 @@ def render_submission_list(rows: list[dict], sb: Optional[Client] = None, allow_
                 for label, val in open_answers:
                     st.write(f"- {label}")
                     st.write(val)
-
-            if row.get("presenter_file_path") and sb is not None:
-                st.markdown("---")
-                render_presenter_file_link(sb, row.get("presenter_file_path"))
 
             if allow_delete and sb is not None:
                 st.divider()
@@ -926,13 +1015,17 @@ def render_admin_dashboard(sb: Client):
             "(or never submitted). See the Compliance tab for details."
         )
 
-    tab_analytics, tab_browse, tab_compliance, tab_users = st.tabs(
-        ["📊 Analytics", "📄 Browse Submissions", "⚠️ Compliance", "🗂️ Manage Users"]
+    tab_analytics, tab_browse, tab_presentations, tab_compliance, tab_users = st.tabs(
+        ["📊 Analytics", "📄 Browse Submissions", "📎 Presentations", "⚠️ Compliance", "🗂️ Manage Users"]
     )
     with tab_analytics:
         render_analytics_tab(sb)
     with tab_browse:
         render_browse_submissions_tab(sb)
+    with tab_presentations:
+        render_upload_presentation_tab(sb)
+        st.divider()
+        render_presentation_files_list(sb, allow_delete=True)
     with tab_compliance:
         render_compliance_tab(sb, compliance_df)
     with tab_users:
@@ -1282,11 +1375,6 @@ def render_browse_submissions_tab(sb: Client):
         val = _s(row.get(field))
         st.markdown(f"**{label}**")
         st.write(val if val else "_No response_")
-
-    presenter_file_path = _s(row.get("presenter_file_path"))
-    if presenter_file_path:
-        st.divider()
-        render_presenter_file_link(sb, presenter_file_path)
 
     st.divider()
     render_delete_submission_control(sb, row["id"], key_prefix="browse")

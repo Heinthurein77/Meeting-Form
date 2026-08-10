@@ -95,9 +95,10 @@ create table if not exists public.survey_responses (
     q10_challenge_addressed     text,
     q11_future_topics           text,
 
-    -- Path (within the presenter-files storage bucket) to an optional
-    -- PowerPoint file the trainee attached, e.g. the slides the presenter
-    -- shared for that session. Null when no file was attached.
+    -- Deprecated: superseded by the standalone public.presentation_files
+    -- table (not tied to any one trainee's answers). Column kept rather
+    -- than dropped, in case any rows already used it -- the app no longer
+    -- reads or writes it.
     presenter_file_path text,
 
     created_at  timestamptz not null default now()
@@ -114,10 +115,30 @@ create index if not exists idx_survey_responses_department on public.survey_resp
 create index if not exists idx_survey_responses_created_at on public.survey_responses(created_at);
 
 -- -------------------------------------------------------------------------
--- 3. ROW LEVEL SECURITY
+-- 3. PRESENTATION FILES
+-- One row per uploaded presenter PowerPoint file, keyed by training course
+-- rather than by any individual trainee's survey answers -- uploaded once
+-- by whoever has the file on hand (there's no separate presenter login in
+-- this app), viewable by every authenticated user regardless of who
+-- uploaded it, since the whole point is everyone attending can get it.
 -- -------------------------------------------------------------------------
-alter table public.users_profile    enable row level security;
-alter table public.survey_responses enable row level security;
+create table if not exists public.presentation_files (
+    id              uuid primary key default gen_random_uuid(),
+    training_course text not null,
+    presenter_name  text,
+    file_path       text not null,
+    uploaded_by     uuid references auth.users(id) on delete set null,
+    created_at      timestamptz not null default now()
+);
+
+create index if not exists idx_presentation_files_course on public.presentation_files(training_course);
+
+-- -------------------------------------------------------------------------
+-- 4. ROW LEVEL SECURITY
+-- -------------------------------------------------------------------------
+alter table public.users_profile      enable row level security;
+alter table public.survey_responses   enable row level security;
+alter table public.presentation_files enable row level security;
 
 -- Helper: is the currently authenticated user an admin?
 create or replace function public.is_admin()
@@ -170,16 +191,31 @@ create policy "responses_delete_admin"
     on public.survey_responses for delete
     using (public.is_admin());
 
+-- presentation_files policies: unlike survey_responses, select is
+-- intentionally open to every authenticated user, not just the uploader
+-- or an admin -- the entire point is that anyone attending the training
+-- can retrieve the presenter's file.
+drop policy if exists "presentation_files_insert_authenticated" on public.presentation_files;
+create policy "presentation_files_insert_authenticated"
+    on public.presentation_files for insert
+    with check (auth.uid() = uploaded_by);
+
+drop policy if exists "presentation_files_select_authenticated" on public.presentation_files;
+create policy "presentation_files_select_authenticated"
+    on public.presentation_files for select
+    using (auth.role() = 'authenticated');
+
+drop policy if exists "presentation_files_delete_admin" on public.presentation_files;
+create policy "presentation_files_delete_admin"
+    on public.presentation_files for delete
+    using (public.is_admin());
+
 -- -------------------------------------------------------------------------
--- 4. STORAGE: presenter's PowerPoint files
--- Files are uploaded by the trainee at survey_responses.presenter_file_path.
--- Note this is simpler than survey_responses' own per-row RLS: any
--- authenticated user (trainee or admin) can read any file in this bucket,
--- rather than only files attached to submissions they're allowed to see.
--- That's an acceptable tradeoff for an internal tool with unguessable
--- UUID-based paths and no public/anonymous access -- the app only ever
--- surfaces a file's path via a submission the viewer already had access
--- to read through survey_responses' own RLS.
+-- 5. STORAGE: presenter's PowerPoint files
+-- Backs presentation_files.file_path above. select is intentionally open
+-- to every authenticated user (same reasoning as presentation_files'
+-- own select policy) -- this bucket has no public/anonymous access, and
+-- paths are unguessable UUIDs.
 -- -------------------------------------------------------------------------
 insert into storage.buckets (id, name, public)
 values ('presenter-files', 'presenter-files', false)
@@ -201,7 +237,7 @@ create policy "presenter_files_delete_admin"
     using (bucket_id = 'presenter-files' and public.is_admin());
 
 -- =========================================================================
--- 5. BACKFILL: promote an existing account that signed up BEFORE the
+-- 6. BACKFILL: promote an existing account that signed up BEFORE the
 -- admin_emails list above included it. Safe to run even if the account
 -- doesn't exist yet or is already an admin.
 -- =========================================================================
