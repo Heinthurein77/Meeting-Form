@@ -95,8 +95,18 @@ create table if not exists public.survey_responses (
     q10_challenge_addressed     text,
     q11_future_topics           text,
 
+    -- Path (within the presenter-files storage bucket) to an optional
+    -- PowerPoint file the trainee attached, e.g. the slides the presenter
+    -- shared for that session. Null when no file was attached.
+    presenter_file_path text,
+
     created_at  timestamptz not null default now()
 );
+
+-- Adds the column for databases that ran schema.sql before this field
+-- existed; a no-op (IF NOT EXISTS) on a fresh install where the CREATE
+-- TABLE above already included it.
+alter table public.survey_responses add column if not exists presenter_file_path text;
 
 create index if not exists idx_survey_responses_user_id    on public.survey_responses(user_id);
 create index if not exists idx_survey_responses_course     on public.survey_responses(training_course);
@@ -160,8 +170,38 @@ create policy "responses_delete_admin"
     on public.survey_responses for delete
     using (public.is_admin());
 
+-- -------------------------------------------------------------------------
+-- 4. STORAGE: presenter's PowerPoint files
+-- Files are uploaded by the trainee at survey_responses.presenter_file_path.
+-- Note this is simpler than survey_responses' own per-row RLS: any
+-- authenticated user (trainee or admin) can read any file in this bucket,
+-- rather than only files attached to submissions they're allowed to see.
+-- That's an acceptable tradeoff for an internal tool with unguessable
+-- UUID-based paths and no public/anonymous access -- the app only ever
+-- surfaces a file's path via a submission the viewer already had access
+-- to read through survey_responses' own RLS.
+-- -------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('presenter-files', 'presenter-files', false)
+on conflict (id) do nothing;
+
+drop policy if exists "presenter_files_insert_authenticated" on storage.objects;
+create policy "presenter_files_insert_authenticated"
+    on storage.objects for insert
+    with check (bucket_id = 'presenter-files' and auth.role() = 'authenticated');
+
+drop policy if exists "presenter_files_select_authenticated" on storage.objects;
+create policy "presenter_files_select_authenticated"
+    on storage.objects for select
+    using (bucket_id = 'presenter-files' and auth.role() = 'authenticated');
+
+drop policy if exists "presenter_files_delete_admin" on storage.objects;
+create policy "presenter_files_delete_admin"
+    on storage.objects for delete
+    using (bucket_id = 'presenter-files' and public.is_admin());
+
 -- =========================================================================
--- 4. BACKFILL: promote an existing account that signed up BEFORE the
+-- 5. BACKFILL: promote an existing account that signed up BEFORE the
 -- admin_emails list above included it. Safe to run even if the account
 -- doesn't exist yet or is already an admin.
 -- =========================================================================

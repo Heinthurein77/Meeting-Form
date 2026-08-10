@@ -6,3 +6,9 @@ backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F0F9FF"
 textColor = "#0C2233"
 font = "sans serif"
+
+[server]
+# Matches MAX_PRESENTER_FILE_MB in app.py and Supabase's default 50MB
+# per-file storage limit, so an oversized presenter PowerPoint file is
+# rejected by the upload widget itself rather than only after submit.
+maxUploadSize = 50

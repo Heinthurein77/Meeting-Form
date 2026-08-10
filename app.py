@@ -8,6 +8,7 @@ Run: streamlit run app.py
 import base64
 import io
 import time
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -78,6 +79,10 @@ OPEN_QUESTIONS = [
     ("q10_challenge_addressed", "10. Which one specific challenge you are currently facing in your job that this seminar helped you address?"),
     ("q11_future_topics", "11. What other topics or skills would you like to learn in future seminar?"),
 ]
+
+PRESENTER_FILES_BUCKET = "presenter-files"
+PRESENTER_FILE_TYPES = ["ppt", "pptx"]
+MAX_PRESENTER_FILE_MB = 50
 
 CUSTOM_CSS = f"""
 <style>
@@ -556,6 +561,11 @@ def render_new_survey_tab(sb: Client):
 
         training_course = st.text_input("Training Course *", key=f"course_{nonce}")
         presenter_name = st.text_input("Presenter Name", key=f"presenter_{nonce}")
+        presenter_file = st.file_uploader(
+            "Presenter's PowerPoint File (optional)",
+            type=PRESENTER_FILE_TYPES,
+            key=f"pptfile_{nonce}",
+        )
 
         c3, c4 = st.columns(2)
         with c3:
@@ -604,6 +614,10 @@ def render_new_survey_tab(sb: Client):
         if rating_values[field] is None:
             missing.append(label)
 
+    if presenter_file is not None and presenter_file.size > MAX_PRESENTER_FILE_MB * 1024 * 1024:
+        st.error(f"Presenter's PowerPoint file is too large (max {MAX_PRESENTER_FILE_MB} MB).")
+        return
+
     if missing:
         st.error("Please complete the following required fields:\n\n- " + "\n- ".join(missing))
         return
@@ -626,6 +640,15 @@ def render_new_survey_tab(sb: Client):
         **{field: open_values[field].strip() for field, _ in OPEN_QUESTIONS},
     }
 
+    if presenter_file is not None:
+        try:
+            payload["presenter_file_path"] = upload_presenter_file(
+                sb, st.session_state.auth_user["id"], presenter_file
+            )
+        except Exception as e:
+            st.error(f"Could not upload the presenter's PowerPoint file ({type(e).__name__}): {e}")
+            return
+
     try:
         sb.table("survey_responses").insert(payload).execute()
         st.toast("Survey submitted — thank you!", icon="✅")
@@ -645,6 +668,47 @@ def fetch_submissions_for_user(sb: Client, user_id: str) -> list[dict]:
         .execute()
     )
     return resp.data or []
+
+
+def upload_presenter_file(sb: Client, user_id: str, uploaded_file) -> str:
+    """Uploads a presenter's PowerPoint file to Supabase Storage and
+    returns its storage path. Raises on failure -- callers should not
+    insert the survey response if this fails, to avoid saving a broken
+    file reference. Path is prefixed with the uploader's user_id purely
+    for organization; the presenter-files bucket's RLS (schema.sql) makes
+    it readable by any authenticated user regardless of the prefix."""
+    ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
+    path = f"{user_id}/{uuid.uuid4()}.{ext}"
+    sb.storage.from_(PRESENTER_FILES_BUCKET).upload(
+        path,
+        uploaded_file.getvalue(),
+        file_options={"content-type": uploaded_file.type or "application/octet-stream"},
+    )
+    return path
+
+
+def get_presenter_file_url(sb: Client, path: str) -> Optional[str]:
+    """Returns a time-limited signed URL for downloading/viewing an
+    attached presenter file, or None if that fails (e.g. the object was
+    deleted) -- callers should degrade gracefully, not crash the page."""
+    try:
+        result = sb.storage.from_(PRESENTER_FILES_BUCKET).create_signed_url(path, expires_in=3600)
+        return result.get("signedURL") or result.get("signedUrl")
+    except Exception:
+        return None
+
+
+def render_presenter_file_link(sb: Client, path: Optional[str]):
+    """Shows a link to the attached presenter file, if any. Used wherever
+    a submission is displayed (My Submissions, admin's View Submissions,
+    Browse Submissions)."""
+    if not path:
+        return
+    url = get_presenter_file_url(sb, path)
+    if url:
+        st.markdown(f"📎 [Presenter's PowerPoint File]({url})")
+    else:
+        st.caption("📎 Presenter's PowerPoint file was attached but could not be loaded.")
 
 
 def delete_submission(sb: Client, response_id: str) -> None:
@@ -723,6 +787,10 @@ def render_submission_list(rows: list[dict], sb: Optional[Client] = None, allow_
                     st.write(f"- {label}")
                     st.write(val)
 
+            if row.get("presenter_file_path") and sb is not None:
+                st.markdown("---")
+                render_presenter_file_link(sb, row.get("presenter_file_path"))
+
             if allow_delete and sb is not None:
                 st.divider()
                 render_delete_submission_control(sb, row["id"], key_prefix="submlist")
@@ -744,7 +812,9 @@ def render_my_submissions_tab(sb: Client):
         st.error(f"Could not load your submissions: {e}")
         return
 
-    render_submission_list(rows)  # allow_delete stays False: trainees can't delete their own records
+    # allow_delete stays False: trainees can't delete their own records. sb
+    # is still passed through so presenter file links can be generated.
+    render_submission_list(rows, sb=sb)
 
 
 # ---------------------------------------------------------------------------
@@ -1212,6 +1282,11 @@ def render_browse_submissions_tab(sb: Client):
         val = _s(row.get(field))
         st.markdown(f"**{label}**")
         st.write(val if val else "_No response_")
+
+    presenter_file_path = _s(row.get("presenter_file_path"))
+    if presenter_file_path:
+        st.divider()
+        render_presenter_file_link(sb, presenter_file_path)
 
     st.divider()
     render_delete_submission_control(sb, row["id"], key_prefix="browse")
