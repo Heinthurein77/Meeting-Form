@@ -723,6 +723,12 @@ def render_upload_presentation_tab(sb: Client):
     any individual trainee's survey answers -- one file per training
     course/session, uploaded once by whoever has it on hand, without
     needing to also answer the rating/feedback questions."""
+    # A toast alone is easy to miss (small, corner-of-screen, fades fast).
+    # Show a persistent banner too, exactly once, right after a successful
+    # upload -- same pattern as the survey form's post-submit banner.
+    if st.session_state.pop("presentation_just_uploaded", False):
+        st.success("✅ Presentation file uploaded successfully!")
+
     st.subheader("Upload a Presentation File")
     with st.form("presentation_upload_form", clear_on_submit=True):
         training_course = st.text_input("Training Course *")
@@ -755,6 +761,7 @@ def render_upload_presentation_tab(sb: Client):
         ).execute()
         st.cache_data.clear()
         st.toast("Presentation file uploaded!", icon="✅")
+        st.session_state.presentation_just_uploaded = True
         st.rerun()
     except Exception as e:
         st.error(f"Could not upload the presentation file ({type(e).__name__}): {e}")
