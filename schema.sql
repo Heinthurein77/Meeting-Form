@@ -153,6 +153,30 @@ as $$
     );
 $$;
 
+-- SECURITY: profile_update_own (below) only checks row ownership
+-- (auth.uid() = id), not which columns are being changed -- without this
+-- trigger, any user could grant themselves role='admin' via a direct
+-- PostgREST call, e.g. PATCH /users_profile?id=eq.<their-own-id> with
+-- body {"role":"admin"}, bypassing the app's own UI safeguard entirely
+-- (that safeguard is client-side only). This is the actual enforcement.
+create or replace function public.prevent_self_role_escalation()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+    if new.role is distinct from old.role and not public.is_admin() then
+        raise exception 'Only admins can change a user''s role';
+    end if;
+    return new;
+end;
+$$;
+
+drop trigger if exists trg_prevent_self_role_escalation on public.users_profile;
+create trigger trg_prevent_self_role_escalation
+    before update on public.users_profile
+    for each row execute procedure public.prevent_self_role_escalation();
+
 -- users_profile policies
 drop policy if exists "profile_select_own_or_admin" on public.users_profile;
 create policy "profile_select_own_or_admin"

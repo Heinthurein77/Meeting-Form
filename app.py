@@ -83,6 +83,15 @@ OPEN_QUESTIONS = [
 PRESENTER_FILES_BUCKET = "presenter-files"
 PRESENTER_FILE_TYPES = ["ppt", "pptx"]
 MAX_PRESENTER_FILE_MB = 50
+# Fixed by extension rather than trusting the browser-reported
+# uploaded_file.type, which is client-controlled (e.g. via the File API,
+# `new File([blob], "x.pptx", {type: "text/html"})`) -- storing and later
+# serving an attacker-chosen content-type could make a signed URL render
+# inline as HTML/JS instead of downloading.
+PRESENTER_FILE_CONTENT_TYPES = {
+    "ppt": "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
 
 CUSTOM_CSS = f"""
 <style>
@@ -667,10 +676,11 @@ def upload_presenter_file(sb: Client, user_id: str, uploaded_file) -> str:
     makes it readable by any authenticated user regardless of the prefix."""
     ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
     path = f"{user_id}/{uuid.uuid4()}.{ext}"
+    content_type = PRESENTER_FILE_CONTENT_TYPES.get(ext, "application/octet-stream")
     sb.storage.from_(PRESENTER_FILES_BUCKET).upload(
         path,
         uploaded_file.getvalue(),
-        file_options={"content-type": uploaded_file.type or "application/octet-stream"},
+        file_options={"content-type": content_type},
     )
     return path
 
@@ -929,6 +939,27 @@ def fetch_responses(_sb: Client, cache_key: str) -> pd.DataFrame:
         # Submissions, Compliance, CSV/Excel) shows Myanmar time without
         # each of them needing to remember to convert it themselves.
         df["created_at"] = pd.to_datetime(df["created_at"]).dt.tz_convert(LOCAL_TZ)
+    return df
+
+
+def _sanitize_for_spreadsheet(value):
+    """Neutralizes CSV/Excel formula injection: a cell whose text starts
+    with =, +, -, @, tab, or CR can be interpreted as a live formula by
+    Excel/Sheets when the exported file is opened (trainee-controlled
+    free-text fields flow straight into these exports). Prefixing with a
+    single quote keeps the value visible as plain text instead."""
+    if isinstance(value, str) and value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
+def sanitize_df_for_export(df: pd.DataFrame) -> pd.DataFrame:
+    """Applies _sanitize_for_spreadsheet to every text column. Used only
+    for the actual downloaded CSV/Excel bytes -- the on-screen
+    st.dataframe keeps showing the real, unmodified text."""
+    df = df.copy()
+    for col in df.select_dtypes(include=["object", "string"]).columns:
+        df[col] = df[col].map(_sanitize_for_spreadsheet)
     return df
 
 
@@ -1209,11 +1240,12 @@ def render_analytics_tab(sb: Client):
 
     # ---- Export ----
     st.subheader("Export")
+    export_df = sanitize_df_for_export(filtered[display_cols])
     e1, e2 = st.columns(2)
     with e1:
         st.download_button(
             "Download CSV",
-            data=filtered[display_cols].to_csv(index=False).encode("utf-8"),
+            data=export_df.to_csv(index=False).encode("utf-8"),
             file_name=f"survey_responses_{datetime.now():%Y%m%d_%H%M%S}.csv",
             mime="text/csv",
             use_container_width=True,
@@ -1221,7 +1253,7 @@ def render_analytics_tab(sb: Client):
     with e2:
         st.download_button(
             "Download Excel (.xlsx)",
-            data=to_excel_bytes(filtered[display_cols]),
+            data=to_excel_bytes(export_df),
             file_name=f"survey_responses_{datetime.now():%Y%m%d_%H%M%S}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
